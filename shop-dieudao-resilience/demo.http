@@ -5,101 +5,101 @@
 ### ============================================================
 
 ### 0. RESET: user-service khoe lai + CB ve CLOSED (chay truoc moi kich ban)
-GET http://localhost:8081/api/users/chaos/reset
+POST http://localhost:8081/api/chaos/reset
 
 ###
-GET http://localhost:8080/api/orders/demo/reset
+POST http://localhost:8080/api/orders/resilience/reset
 
 ### Xem trang thai CB / Bulkhead bat cu luc nao
-GET http://localhost:8080/api/orders/demo/status
+GET http://localhost:8080/api/orders/resilience/status
 
 
 ### ============================================================
 ### KICH BAN 1 - TIMEOUT (user-service cham 4s, TimeLimiter cat o 1.5s)
 ### ============================================================
-GET http://localhost:8081/api/users/chaos?delayMs=4000
+POST http://localhost:8081/api/chaos?delayMs=4000
 
 ###
 # Ky vong: ~1500ms, outcome=TIMEOUT, HTTP 504
-GET http://localhost:8080/api/orders/demo/timeout/1
+GET http://localhost:8080/api/orders/resilience/timeout/1
 
 
 ### ============================================================
 ### KICH BAN 2 - RETRY (2 lan dau loi, lan 3 thanh cong)
 ### ============================================================
-GET http://localhost:8081/api/users/chaos/reset
+POST http://localhost:8081/api/chaos/reset
 
 ###
-GET http://localhost:8081/api/users/chaos?failFirstN=2
+POST http://localhost:8081/api/chaos?failFirstN=2
 
 ###
 # Ky vong: OK, attempts=3, ~1500ms (cho 500ms + 1000ms backoff). Xem log order-service: [RETRY ...]
-GET http://localhost:8080/api/orders/demo/retry/1
+GET http://localhost:8080/api/orders/resilience/retry/1
 
 ###
 # Biendoi: loi 5 lan > 3 lan thu -> that bai HTTP 502 sau 3 lan goi
-GET http://localhost:8081/api/users/chaos?failFirstN=5
+POST http://localhost:8081/api/chaos?failFirstN=5
 
 ###
-GET http://localhost:8080/api/orders/demo/retry/1
+GET http://localhost:8080/api/orders/resilience/retry/1
 
 
 ### ============================================================
 ### KICH BAN 3 - BULKHEAD (toi da 3 request dong thoi)
 ### ============================================================
-GET http://localhost:8081/api/users/chaos/reset
+POST http://localhost:8081/api/chaos/reset
 
 ###
-GET http://localhost:8081/api/users/chaos?delayMs=2000
+POST http://localhost:8081/api/chaos?delayMs=2000
 
 ###
 # Ban 10 request song song. Ky vong: 3 x OK, 7 x BULKHEAD_FULL (bi tu choi ngay, khong cho)
-GET http://localhost:8080/api/orders/demo/burst/bulkhead?n=10
+GET http://localhost:8080/api/orders/resilience/burst/bulkhead?n=10
 
 
 ### ============================================================
 ### KICH BAN 4 - CIRCUIT BREAKER (user-service sap)
 ### ============================================================
-GET http://localhost:8081/api/users/chaos/reset
+POST http://localhost:8081/api/chaos/reset
 
 ###
-GET http://localhost:8080/api/orders/demo/reset
+POST http://localhost:8080/api/orders/resilience/reset
 
 ###
-GET http://localhost:8081/api/users/chaos?failPercent=100
+POST http://localhost:8081/api/chaos?failPercent=100
 
 ### Goi 5 lan dau -> UPSTREAM_5XX (CB dang dem). Bam Send nhieu lan:
-GET http://localhost:8080/api/orders/demo/circuit-breaker/1
+GET http://localhost:8080/api/orders/resilience/circuit-breaker/1
 
 ###
-GET http://localhost:8080/api/orders/demo/circuit-breaker/1
+GET http://localhost:8080/api/orders/resilience/circuit-breaker/1
 
 ###
-GET http://localhost:8080/api/orders/demo/circuit-breaker/1
+GET http://localhost:8080/api/orders/resilience/circuit-breaker/1
 
 ###
-GET http://localhost:8080/api/orders/demo/circuit-breaker/1
+GET http://localhost:8080/api/orders/resilience/circuit-breaker/1
 
 ###
-GET http://localhost:8080/api/orders/demo/circuit-breaker/1
+GET http://localhost:8080/api/orders/resilience/circuit-breaker/1
 
 ### Lan thu 6: CIRCUIT_OPEN, HTTP 503, tra ve ngay (~0ms), user-service KHONG bi goi
-GET http://localhost:8080/api/orders/demo/circuit-breaker/1
+GET http://localhost:8080/api/orders/resilience/circuit-breaker/1
 
 ###
-GET http://localhost:8080/api/orders/demo/status
+GET http://localhost:8080/api/orders/resilience/status
 
 ### Cho 10s (CB sang HALF_OPEN), cho user-service khoe lai:
-GET http://localhost:8081/api/users/chaos/reset
+POST http://localhost:8081/api/chaos/reset
 
 ### Goi 2 lan thanh cong -> CB ve CLOSED
-GET http://localhost:8080/api/orders/demo/circuit-breaker/1
+GET http://localhost:8080/api/orders/resilience/circuit-breaker/1
 
 ###
-GET http://localhost:8080/api/orders/demo/circuit-breaker/1
+GET http://localhost:8080/api/orders/resilience/circuit-breaker/1
 
 ###
-GET http://localhost:8080/api/orders/demo/status
+GET http://localhost:8080/api/orders/resilience/status
 
 
 ### ============================================================
@@ -107,73 +107,73 @@ GET http://localhost:8080/api/orders/demo/status
 ### ============================================================
 
 ### 5a. Binh thuong
-GET http://localhost:8081/api/users/chaos/reset
+POST http://localhost:8081/api/chaos/reset
 
 ###
-GET http://localhost:8080/api/orders/demo/reset
+POST http://localhost:8080/api/orders/resilience/reset
 
 ###
 # Ky vong: OK, attempts=1
-GET http://localhost:8080/api/orders/demo/combined/1
+GET http://localhost:8080/api/orders/resilience/combined/1
 
 ### 5b. Loi thoang qua -> Retry cuu duoc
-GET http://localhost:8081/api/users/chaos?failFirstN=2
+POST http://localhost:8081/api/chaos?failFirstN=2
 
 ###
 # Ky vong: OK, attempts=3
-GET http://localhost:8080/api/orders/demo/combined/1
+GET http://localhost:8080/api/orders/resilience/combined/1
 
 ### 5c. Cham -> Timeout moi lan -> Retry 3 lan -> CB dem loi
 ### (reset CB truoc de cua so dem sach, ket qua de du doan)
-GET http://localhost:8080/api/orders/demo/reset
+POST http://localhost:8080/api/orders/resilience/reset
 
 ###
-GET http://localhost:8081/api/users/chaos?delayMs=4000
+POST http://localhost:8081/api/chaos?delayMs=4000
 
 ###
 # Ky vong: ~6s, FALLBACK (vi TIMEOUT), attempts=3, HTTP 200 + user du phong
-GET http://localhost:8080/api/orders/demo/combined/1
+GET http://localhost:8080/api/orders/resilience/combined/1
 
 ###
 # Lan 2: 3 loi o lan 1 + 2 loi dau lan 2 = 5 loi -> CB OPEN giua chung. Retry KHONG thu lai khi mach mo.
 # Ky vong: FALLBACK (vi CIRCUIT_OPEN), attempts=2, ~2.5s
-GET http://localhost:8080/api/orders/demo/combined/1
+GET http://localhost:8080/api/orders/resilience/combined/1
 
 ###
 # Lan 3: mach dang OPEN. Ky vong: FALLBACK (vi CIRCUIT_OPEN), attempts=0, ~0ms (fail-fast)
-GET http://localhost:8080/api/orders/demo/combined/1
+GET http://localhost:8080/api/orders/resilience/combined/1
 
 ###
-GET http://localhost:8080/api/orders/demo/status
+GET http://localhost:8080/api/orders/resilience/status
 
 ### 5d. Tat fallback de thay loi that
-GET http://localhost:8080/api/orders/demo/combined/1?fallback=false
+GET http://localhost:8080/api/orders/resilience/combined/1?fallback=false
 
 ### 5e. Qua tai: 20 request song song (user-service cham 4s). Suc chua bulkhead = 3 thread + 2 hang doi = 5
 ### Ky vong: phan lon BULKHEAD_FULL (tu choi ngay), vai request TIMEOUT / CIRCUIT_OPEN; order-service khong bi treo
-GET http://localhost:8080/api/orders/demo/reset
+POST http://localhost:8080/api/orders/resilience/reset
 
 ###
-GET http://localhost:8080/api/orders/demo/burst/combined-nofallback?n=20
+GET http://localhost:8080/api/orders/resilience/burst/combined-nofallback?n=20
 
 ### 5f. Hoi phuc: user-service khoe, doi 10s, CB HALF_OPEN -> CLOSED
-GET http://localhost:8081/api/users/chaos/reset
+POST http://localhost:8081/api/chaos/reset
 
 ###
-GET http://localhost:8080/api/orders/demo/combined/1
+GET http://localhost:8080/api/orders/resilience/combined/1
 
 ###
-GET http://localhost:8080/api/orders/demo/status
+GET http://localhost:8080/api/orders/resilience/status
 
 
 ### ============================================================
 ### ENDPOINT GOC CUA CODE MAU (Feign "xxx": readTimeout 3s + Retryer.Default 3 lan)
 ### De thay hanh vi goc: chaos?delayMs=4000 roi goi -> Feign timeout, tu retry 3 lan
 ### ============================================================
-GET http://localhost:8081/api/users/chaos?delayMs=4000
+POST http://localhost:8081/api/chaos?delayMs=4000
 
 ###
 GET http://localhost:8080/api/orders/1
 
 ###
-GET http://localhost:8081/api/users/chaos/reset
+POST http://localhost:8081/api/chaos/reset

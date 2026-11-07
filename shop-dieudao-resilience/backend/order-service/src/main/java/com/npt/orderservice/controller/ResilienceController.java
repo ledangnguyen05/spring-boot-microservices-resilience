@@ -8,8 +8,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -23,17 +23,17 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Các endpoint demo Resilience4j (gọi trực tiếp hoặc qua API Gateway: http://localhost:8080/api/orders/demo/...)
+ * Các endpoint demo Resilience4j (gọi trực tiếp hoặc qua API Gateway: http://localhost:8080/api/orders/resilience/...)
  */
 @RestController
 @CrossOrigin(origins = "*")
-@Tag(name = "Resilience Demo API", description = "Các demo 4 pattern đơn lẻ và kết hợp: Timeout, Retry, Bulkhead, Circuit Breaker")
-@RequestMapping("/api/orders/demo")
-public class ResilienceDemoController {
+@Tag(name = "Order Resilience API", description = "Các demo 4 pattern đơn lẻ và kết hợp: Timeout, Retry, Bulkhead, Circuit Breaker")
+@RequestMapping("/api/orders/resilience")
+public class ResilienceController {
 
     private final ResilienceDemoService service;
 
-    public ResilienceDemoController(ResilienceDemoService service) {
+    public ResilienceController(ResilienceDemoService service) {
         this.service = service;
     }
 
@@ -117,7 +117,7 @@ public class ResilienceDemoController {
 
     @Operation(summary = "Reset Circuit Breaker về trạng thái CLOSED",
             description = "Khôi phục mọi Circuit Breaker về trạng thái CLOSED và xóa sạch số liệu thống kê để bắt đầu lại kịch bản.")
-    @RequestMapping(path = "/reset", method = {RequestMethod.GET, RequestMethod.POST})
+    @PostMapping("/reset")
     public Map<String, Object> reset() {
         return service.reset();
     }
