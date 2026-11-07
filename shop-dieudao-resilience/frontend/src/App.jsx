@@ -79,6 +79,7 @@ export default function App() {
   const [needsRecovery, setNeedsRecovery] = useState(false);
   const [runCount, setRunCount] = useState(0);
   const [probeRunCount, setProbeRunCount] = useState(0);
+  const [dashboardLayout, setDashboardLayout] = useState('stacked'); // 'stacked' (full-width) or 'split' (2-column)
   const running = useRef(false);
   const scenario = scenarios[selected];
   const lesson = lessons[scenario.id];
@@ -424,13 +425,33 @@ export default function App() {
             <div className="stage-results">
               <div className="result-heading">
                 <div>
-                  <div className="section-label">BẢNG ĐIỀU KHIỂN & KẾT QUẢ ĐO ĐẠC SONG SONG</div>
+                  <div className="section-label">MÔ PHỎNG & KẾT QUẢ ĐO ĐẠC THỰC TẾ</div>
                   <h3>{scenario.question}</h3>
                 </div>
-                {route && <span className="route">{route === gateway ? 'Qua Gateway' : 'Gọi trực tiếp'}</span>}
+                <div className="heading-actions">
+                  {route && <span className="route">{route === gateway ? 'Qua Gateway' : 'Gọi trực tiếp'}</span>}
+                  <div className="layout-switcher">
+                    <button
+                      type="button"
+                      className={`layout-btn ${dashboardLayout === 'stacked' ? 'active' : ''}`}
+                      onClick={() => setDashboardLayout('stacked')}
+                      title="Chế độ to rõ: Minh họa toàn màn hình, chữ to nhất"
+                    >
+                      To rõ (Toàn chiều rộng)
+                    </button>
+                    <button
+                      type="button"
+                      className={`layout-btn ${dashboardLayout === 'split' ? 'active' : ''}`}
+                      onClick={() => setDashboardLayout('split')}
+                      title="Chế độ song song: Xem minh họa và bảng kết quả cạnh nhau"
+                    >
+                      Song song (2 cột)
+                    </button>
+                  </div>
+                </div>
               </div>
 
-              <div className="demo-dashboard">
+              <div className={`demo-dashboard layout-${dashboardLayout}`}>
                 <div className="dashboard-visualizer">
                   <FlowVisualizer
                     scenarioId={scenario.id}

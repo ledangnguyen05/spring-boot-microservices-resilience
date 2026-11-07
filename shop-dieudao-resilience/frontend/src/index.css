@@ -572,19 +572,64 @@ footer span { margin: 0 4px; color: var(--accent); }
   box-shadow: 0 0 10px rgba(99, 102, 241, 0.5);
 }
 
-/* Side-by-side Dashboard Layout for simultaneous visualizer + table */
+/* Responsive Dashboard Layouts: Stacked (Full-Width Large) vs Split (2-Column) */
+.heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.layout-switcher {
+  display: inline-flex;
+  background: #f1f2f8;
+  border-radius: 8px;
+  padding: 2px;
+  gap: 2px;
+}
+.layout-btn {
+  border: none;
+  background: transparent;
+  padding: 5px 11px;
+  border-radius: 6px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.18s;
+}
+.layout-btn:hover {
+  color: #1e293b;
+}
+.layout-btn.active {
+  background: #ffffff;
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
 .demo-dashboard {
-  display: grid;
-  grid-template-columns: minmax(0, 1.18fr) minmax(0, 1fr);
-  gap: 18px;
-  align-items: start;
   margin-top: 14px;
 }
-.dashboard-visualizer, .dashboard-results {
-  min-width: 0;
+/* Stacked Layout: Full Width, Maximum Text Clarity & Size */
+.demo-dashboard.layout-stacked {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+.demo-dashboard.layout-stacked .dashboard-visualizer,
+.demo-dashboard.layout-stacked .dashboard-results {
+  width: 100%;
+}
+
+/* Split Layout: Side-by-Side on Wide Displays */
+.demo-dashboard.layout-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.22fr) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
 }
 @media (max-width: 1024px) {
-  .demo-dashboard {
+  .demo-dashboard.layout-split {
     grid-template-columns: 1fr;
   }
 }

@@ -1066,52 +1066,54 @@ export default function FlowVisualizer({
           {/* Pipe 2 Cut Scissors */}
           {pipe2Cut && (
             <g transform="translate(628, 95)">
-              <circle cx="0" cy="25" r="18" fill="#ef4444" />
-              <text x="0" y="31" textAnchor="middle" fill="#fff" fontSize="16">✂️</text>
-              <text x="0" y="-3" textAnchor="middle" fill="#ef4444" fontSize="11" fontWeight="bold">NGẮT TIMEOUT</text>
+              <circle cx="0" cy="25" r="20" fill="#ef4444" />
+              <text x="0" y="32" textAnchor="middle" fill="#fff" fontSize="17">✂️</text>
+              <rect x="-55" y="-18" width="110" height="18" rx="4" fill="#1e1026" stroke="#ef4444" strokeWidth="1.2" />
+              <text x="0" y="-5" textAnchor="middle" fill="#fca5a5" fontSize="11" fontWeight="bold">NGẮT TIMEOUT</text>
             </g>
           )}
 
           {/* Pipe 2 Blocked Barrier */}
           {pipe2Blocked && (
             <g transform="translate(628, 95)">
-              <rect x="-14" y="0" width="28" height="50" rx="8" fill="#ef4444" opacity="0.9" />
-              <text x="0" y="31" textAnchor="middle" fill="#fff" fontSize="18">⛔</text>
-              <text x="0" y="-3" textAnchor="middle" fill="#fca5a5" fontSize="11" fontWeight="bold">CHẶN FAIL-FAST (0 LƯỢT)</text>
+              <rect x="-16" y="0" width="32" height="50" rx="8" fill="#ef4444" opacity="0.95" />
+              <text x="0" y="32" textAnchor="middle" fill="#fff" fontSize="19">⛔</text>
+              <rect x="-80" y="-18" width="160" height="18" rx="4" fill="#1e1026" stroke="#ef4444" strokeWidth="1.2" />
+              <text x="0" y="-5" textAnchor="middle" fill="#fca5a5" fontSize="11" fontWeight="bold">CHẶN FAIL-FAST (0 LƯỢT)</text>
             </g>
           )}
 
           {/* Bulkhead Slots and Barrier in Order */}
           {scenarioId === 'bulkhead' && (
-            <g transform="translate(425, 60)">
-              <rect x="0" y="5" width="46" height="24" rx="6" fill="#064e3b" stroke="#10b981" strokeWidth="1.5" />
-              <text x="23" y="21" textAnchor="middle" fill="#34d399" fontSize="10" fontWeight="bold">Slot 1</text>
+            <g transform="translate(425, 58)">
+              <rect x="0" y="4" width="48" height="25" rx="6" fill="#064e3b" stroke="#10b981" strokeWidth="1.5" />
+              <text x="24" y="21" textAnchor="middle" fill="#6ee7b7" fontSize="11" fontWeight="bold">Slot 1</text>
 
-              <rect x="0" y="35" width="46" height="24" rx="6" fill="#064e3b" stroke="#10b981" strokeWidth="1.5" />
-              <text x="23" y="51" textAnchor="middle" fill="#34d399" fontSize="10" fontWeight="bold">Slot 2</text>
+              <rect x="0" y="34" width="48" height="25" rx="6" fill="#064e3b" stroke="#10b981" strokeWidth="1.5" />
+              <text x="24" y="51" textAnchor="middle" fill="#6ee7b7" fontSize="11" fontWeight="bold">Slot 2</text>
 
-              <rect x="0" y="65" width="46" height="24" rx="6" fill="#064e3b" stroke="#10b981" strokeWidth="1.5" />
-              <text x="23" y="81" textAnchor="middle" fill="#34d399" fontSize="10" fontWeight="bold">Slot 3</text>
+              <rect x="0" y="64" width="48" height="25" rx="6" fill="#064e3b" stroke="#10b981" strokeWidth="1.5" />
+              <text x="24" y="81" textAnchor="middle" fill="#6ee7b7" fontSize="11" fontWeight="bold">Slot 3</text>
 
-              <rect x="0" y="95" width="46" height="22" rx="6" fill="#7f1d1d" stroke="#ef4444" strokeWidth="1.5" />
-              <text x="23" y="110" textAnchor="middle" fill="#fca5a5" fontSize="10" fontWeight="bold">🛡️ Chặn 429</text>
+              <rect x="0" y="94" width="48" height="24" rx="6" fill="#7f1d1d" stroke="#ef4444" strokeWidth="1.5" />
+              <text x="24" y="110" textAnchor="middle" fill="#fca5a5" fontSize="11" fontWeight="bold">🛡️ Chặn 429</text>
             </g>
           )}
 
           {/* Node 1: API Gateway */}
           <g transform="translate(60, 65)">
             <rect x="0" y="0" width="140" height="110" rx="14" fill="#18143d" stroke="#4338ca" strokeWidth="2.5" />
-            <circle cx="70" cy="35" r="20" fill="#29235e" />
-            <text x="70" y="42" textAnchor="middle" fill="#818cf8" fontSize="20">🌐</text>
-            <text x="70" y="75" textAnchor="middle" fill="#ffffff" fontSize="13" fontWeight="bold">API Gateway</text>
-            <text x="70" y="93" textAnchor="middle" fill="#94a3b8" fontSize="10">:8080 · Client</text>
+            <circle cx="70" cy="35" r="22" fill="#29235e" />
+            <text x="70" y="43" textAnchor="middle" fill="#818cf8" fontSize="22">🌐</text>
+            <text x="70" y="75" textAnchor="middle" fill="#ffffff" fontSize="15" fontWeight="bold">API Gateway</text>
+            <text x="70" y="94" textAnchor="middle" fill="#cbd5e1" fontSize="12" fontWeight="600">:8080 · Client</text>
           </g>
 
           {/* Node 2: Order Service */}
           <g transform="translate(345, 45)">
             <rect x="0" y="0" width="210" height="150" rx="16" fill="#14112e" stroke="#6366f1" strokeWidth="2.5" />
             <rect x="15" y="10" width="180" height="28" rx="8" fill="#221d4c" />
-            <text x="105" y="29" textAnchor="middle" fill="#e0e7ff" fontSize="12" fontWeight="bold">📦 Order Service (:8082)</text>
+            <text x="105" y="29" textAnchor="middle" fill="#ffffff" fontSize="14" fontWeight="bold">📦 Order Service (:8082)</text>
 
             {/* Inner Guard Box */}
             <g transform="translate(20, 48)">
@@ -1134,53 +1136,53 @@ export default function FlowVisualizer({
 
               {scenarioId === 'timeout' && (
                 <>
-                  <text x="85" y="26" textAnchor="middle" fill="#f59e0b" fontSize="10" fontWeight="bold">3 Lượt đo so sánh</text>
-                  <text x="85" y="46" textAnchor="middle" fill="#94a3b8" fontSize="9">1. Trực tiếp: Ngâm 4s (200)</text>
-                  <text x="85" y="60" textAnchor="middle" fill="#ef4444" fontSize="9">2. Feign Timeout: Cắt 3s</text>
-                  <text x="85" y="74" textAnchor="middle" fill="#ec4899" fontSize="9" fontWeight="bold">3. TimeLimiter: Cắt 1.5s</text>
+                  <text x="85" y="25" textAnchor="middle" fill="#f59e0b" fontSize="12" fontWeight="bold">3 Lượt đo so sánh</text>
+                  <text x="85" y="43" textAnchor="middle" fill="#cbd5e1" fontSize="11" fontWeight="600">1. Trực tiếp: Ngâm 4s (200)</text>
+                  <text x="85" y="58" textAnchor="middle" fill="#fca5a5" fontSize="11" fontWeight="bold">2. Feign Timeout: Cắt 3s</text>
+                  <text x="85" y="73" textAnchor="middle" fill="#f472b6" fontSize="11" fontWeight="bold">3. TimeLimiter: Cắt 1.5s</text>
                 </>
               )}
               {scenarioId === 'retry' && (
                 <>
-                  <text x="85" y="28" textAnchor="middle" fill="#38bdf8" fontSize="11" fontWeight="bold">🔄 Resilience4j Retry</text>
-                  <text x="85" y="48" textAnchor="middle" fill="#94a3b8" fontSize="10">Max 3 lần · Backoff</text>
-                  <text x="85" y="68" textAnchor="middle" fill="#22c55e" fontSize="10" fontWeight="bold">Tự cứu ở lần 3</text>
+                  <text x="85" y="28" textAnchor="middle" fill="#38bdf8" fontSize="13" fontWeight="bold">🔄 Resilience4j Retry</text>
+                  <text x="85" y="48" textAnchor="middle" fill="#cbd5e1" fontSize="11" fontWeight="600">Max 3 lần · Backoff</text>
+                  <text x="85" y="68" textAnchor="middle" fill="#4ade80" fontSize="12" fontWeight="bold">Tự cứu ở lần 3</text>
                 </>
               )}
               {scenarioId === 'bulkhead' && (
                 <>
-                  <text x="85" y="28" textAnchor="middle" fill="#c084fc" fontSize="11" fontWeight="bold">🛡️ Bulkhead</text>
-                  <text x="85" y="48" textAnchor="middle" fill="#94a3b8" fontSize="10">Hạn ngạch 3 slots</text>
-                  <text x="85" y="68" textAnchor="middle" fill="#f59e0b" fontSize="10" fontWeight="bold">7 Lượt bị dội 429</text>
+                  <text x="85" y="28" textAnchor="middle" fill="#c084fc" fontSize="13" fontWeight="bold">🛡️ Bulkhead</text>
+                  <text x="85" y="48" textAnchor="middle" fill="#cbd5e1" fontSize="11" fontWeight="600">Hạn ngạch 3 slots</text>
+                  <text x="85" y="68" textAnchor="middle" fill="#fca5a5" fontSize="12" fontWeight="bold">7 Lượt bị dội 429</text>
                 </>
               )}
               {scenarioId === 'breaker' && (
                 <>
-                  <text x="85" y="58" textAnchor="middle" fill={leverAngle > 20 ? '#ef4444' : leverAngle > 0 ? '#f59e0b' : '#10b981'} fontSize="11" fontWeight="bold">
+                  <text x="85" y="56" textAnchor="middle" fill={leverAngle > 20 ? '#ef4444' : leverAngle > 0 ? '#f59e0b' : '#10b981'} fontSize="13" fontWeight="bold">
                     Cầu dao: {leverAngle > 20 ? 'OPEN 🔴' : leverAngle > 0 ? 'HALF-OPEN 🟡' : 'CLOSED 🟢'}
                   </text>
-                  <text x="85" y="74" textAnchor="middle" fill="#94a3b8" fontSize="10">
+                  <text x="85" y="73" textAnchor="middle" fill="#cbd5e1" fontSize="11" fontWeight="600">
                     {leverAngle > 20 ? 'Fail-Fast 14ms (503)' : leverAngle > 0 ? '2 Lượt thăm dò' : 'Cho phép lưu thông'}
                   </text>
                 </>
               )}
               {scenarioId === 'converge' && (
                 <>
-                  <text x="85" y="58" textAnchor="middle" fill="#818cf8" fontSize="10" fontWeight="bold">4 Tầng lồng nhau</text>
-                  <text x="85" y="74" textAnchor="middle" fill="#34d399" fontSize="9">Retry ➔ CB ➔ Bulkhead ➔ Feign</text>
+                  <text x="85" y="56" textAnchor="middle" fill="#818cf8" fontSize="12" fontWeight="bold">4 Tầng lồng nhau</text>
+                  <text x="85" y="73" textAnchor="middle" fill="#34d399" fontSize="11" fontWeight="600">Retry ➔ CB ➔ Bulkhead ➔ Feign</text>
                 </>
               )}
               {scenarioId === 'normal' && (
                 <>
-                  <text x="85" y="36" textAnchor="middle" fill="#22c55e" fontSize="11" fontWeight="bold">✅ OpenFeign Chuẩn</text>
-                  <text x="85" y="58" textAnchor="middle" fill="#94a3b8" fontSize="10">Giao tiếp trực tiếp</text>
+                  <text x="85" y="36" textAnchor="middle" fill="#22c55e" fontSize="13" fontWeight="bold">✅ OpenFeign Chuẩn</text>
+                  <text x="85" y="58" textAnchor="middle" fill="#cbd5e1" fontSize="12" fontWeight="600">Giao tiếp trực tiếp</text>
                 </>
               )}
               {scenarioId === 'fallback' && (
                 <>
-                  <text x="85" y="32" textAnchor="middle" fill="#22c55e" fontSize="11" fontWeight="bold">🛡️ Fallback Active</text>
-                  <text x="85" y="52" textAnchor="middle" fill="#94a3b8" fontSize="10">Bảo hiểm sự cố</text>
-                  <text x="85" y="70" textAnchor="middle" fill="#38bdf8" fontSize="10">Trả dữ liệu dự phòng</text>
+                  <text x="85" y="32" textAnchor="middle" fill="#22c55e" fontSize="13" fontWeight="bold">🛡️ Fallback Active</text>
+                  <text x="85" y="52" textAnchor="middle" fill="#cbd5e1" fontSize="11" fontWeight="600">Bảo hiểm sự cố</text>
+                  <text x="85" y="70" textAnchor="middle" fill="#38bdf8" fontSize="11" fontWeight="bold">Trả dữ liệu dự phòng</text>
                 </>
               )}
             </g>
@@ -1194,12 +1196,12 @@ export default function FlowVisualizer({
               stroke={isUserError ? '#e11d48' : '#10b981'}
               strokeWidth="2.5"
             />
-            <circle cx="70" cy="35" r="20" fill={isUserError ? '#3d1624' : '#133526'} />
-            <text x="70" y="42" textAnchor="middle" fill={isUserError ? '#f43f5e' : '#34d399'} fontSize="20">
+            <circle cx="70" cy="35" r="22" fill={isUserError ? '#3d1624' : '#133526'} />
+            <text x="70" y="43" textAnchor="middle" fill={isUserError ? '#f43f5e' : '#34d399'} fontSize="22">
               {isUserError ? '⚠️' : '👤'}
             </text>
-            <text x="70" y="75" textAnchor="middle" fill="#ffffff" fontSize="13" fontWeight="bold">User Service</text>
-            <text x="70" y="93" textAnchor="middle" fill="#94a3b8" fontSize="10">
+            <text x="70" y="75" textAnchor="middle" fill="#ffffff" fontSize="15" fontWeight="bold">User Service</text>
+            <text x="70" y="94" textAnchor="middle" fill="#cbd5e1" fontSize="12" fontWeight="600">
               {isUserError ? 'Giả lập sự cố (:8081)' : 'Bình thường (:8081)'}
             </text>
           </g>
@@ -1207,13 +1209,14 @@ export default function FlowVisualizer({
           {/* Station Countdown Ring */}
           {stationRing && (
             <g transform={`translate(${stationRing.x}, ${stationRing.y})`}>
-              <circle cx="0" cy="0" r="28" fill="none" stroke="#f59e0b44" strokeWidth="4" />
+              <circle cx="0" cy="0" r="30" fill="none" stroke="#f59e0b44" strokeWidth="5" />
               <circle
-                cx="0" cy="0" r="28" fill="none" stroke="#f59e0b" strokeWidth="4"
-                strokeDasharray={`${stationRing.progress * 175} 175`}
+                cx="0" cy="0" r="30" fill="none" stroke="#f59e0b" strokeWidth="5"
+                strokeDasharray={`${stationRing.progress * 188} 188`}
                 transform="rotate(-90)"
               />
-              <text x="0" y="4" textAnchor="middle" fill="#fef08a" fontSize="10" fontWeight="bold">
+              <rect x="-30" y="-10" width="60" height="20" rx="4" fill="#0b081d" opacity="0.9" />
+              <text x="0" y="4" textAnchor="middle" fill="#fef08a" fontSize="12" fontWeight="bold">
                 {stationRing.label}
               </text>
             </g>
@@ -1222,20 +1225,27 @@ export default function FlowVisualizer({
           {/* Multiple Particles (Bulkhead) */}
           {multiPackets && multiPackets.map((p, idx) => (
             <g key={idx} transform={`translate(${p.x}, ${p.y})`} filter="url(#packetGlow)">
-              <circle cx="0" cy="0" r="7" fill={p.color} />
+              <circle cx="0" cy="0" r="8" fill={p.color} />
               <circle cx="0" cy="0" r="3" fill="#ffffff" />
-              <text x="0" y="-10" textAnchor="middle" fill={p.color} fontSize="9" fontWeight="bold">{p.label}</text>
+              <g transform="translate(0, -14)">
+                <rect x="-24" y="-8" width="48" height="15" rx="3" fill="#0b081d" stroke={p.color} strokeWidth="1" />
+                <text x="0" y="3" textAnchor="middle" fill="#ffffff" fontSize="10" fontWeight="bold">{p.label}</text>
+              </g>
             </g>
           ))}
 
           {/* Single Continuous Packet */}
           {packetVisible && (
             <g transform={`translate(${packetX}, ${packetY})`} filter="url(#packetGlow)">
-              <circle cx="0" cy="0" r="13" fill={packetColor} className={isPlaying ? 'pulsing-packet' : ''} />
+              <circle cx="0" cy="0" r="14" fill={packetColor} className={isPlaying ? 'pulsing-packet' : ''} />
               <circle cx="0" cy="0" r="6" fill="#ffffff" />
-              <text x="0" y="-20" textAnchor="middle" fill={packetColor} fontSize="11" fontWeight="bold">
-                {packetLabel}
-              </text>
+              {/* Opaque high-contrast badge behind label for 100% legibility */}
+              <g transform="translate(0, -25)">
+                <rect x="-70" y="-12" width="140" height="20" rx="6" fill="#0c0924" stroke={packetColor} strokeWidth="1.5" />
+                <text x="0" y="2" textAnchor="middle" fill="#ffffff" fontSize="12" fontWeight="bold">
+                  {packetLabel}
+                </text>
+              </g>
             </g>
           )}
         </svg>
