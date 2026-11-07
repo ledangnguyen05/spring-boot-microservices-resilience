@@ -350,18 +350,22 @@ footer span { margin: 0 4px; color: var(--accent); }
   gap: 8px;
 }
 
-.step-counter {
-  font-size: 0.75rem;
-  color: #94a3b8;
-  font-weight: 700;
-  margin-right: 4px;
+.live-badge {
+  font-size: 0.73rem;
+  font-weight: 800;
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: 1px solid;
+  letter-spacing: 0.03em;
+  background: rgba(15, 12, 36, 0.6);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 .vis-btn {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 5px 10px;
+  gap: 6px;
+  padding: 6px 12px;
   border-radius: 8px;
   border: 1px solid #332d66;
   background: #1f1b40;
@@ -393,37 +397,23 @@ footer span { margin: 0 4px; color: var(--accent); }
   cursor: not-allowed;
 }
 
-.pipeline-stage {
-  padding: 14px 10px 4px;
+.canvas-wrapper {
+  position: relative;
+  width: 100%;
+  background: radial-gradient(ellipse at 50% 50%, #1c183d 0%, #0e0b1f 80%);
   display: flex;
   justify-content: center;
   align-items: center;
-  background: radial-gradient(ellipse at 50% 50%, #1e1942 0%, #110e24 75%);
+  padding: 8px 12px;
+  overflow: hidden;
 }
 
-.pipeline-svg {
+.flow-canvas {
   width: 100%;
-  max-width: 860px;
+  max-width: 900px;
   height: auto;
-  min-height: 160px;
-}
-
-.animated-flow-line {
-  animation: dashMove 1.2s linear infinite;
-}
-
-@keyframes dashMove {
-  from { stroke-dashoffset: 24; }
-  to { stroke-dashoffset: 0; }
-}
-
-.pulsing-packet {
-  animation: packetPulse 1.4s infinite ease-in-out;
-}
-
-@keyframes packetPulse {
-  0%, 100% { r: 12px; opacity: 0.95; }
-  50% { r: 15px; opacity: 1; filter: drop-shadow(0 0 8px currentColor); }
+  aspect-ratio: 900 / 280;
+  display: block;
 }
 
 .flow-explanation-card {

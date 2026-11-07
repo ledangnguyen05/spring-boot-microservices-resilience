@@ -1,401 +1,893 @@
 import { useState, useEffect, useRef } from 'react';
 import {
-  Play, Pause, SkipForward, RotateCcw, Clock, RefreshCw, Layers,
-  Zap, ShieldCheck, Server, AlertTriangle, ArrowRight, Ban, CheckCircle2,
-  XCircle, Laptop, Activity
+  Play, Pause, RotateCcw, Clock, RefreshCw, Layers, Zap,
+  Activity, ArrowRight, ShieldCheck, CheckCircle2, AlertTriangle
 } from 'lucide-react';
 
-const flowStepsData = {
-  normal: [
-    {
-      title: 'Bước 1: Client gửi yêu cầu',
-      from: 'client', to: 'order', status: 'sending',
-      action: 'Chuyển tiếp qua Gateway', code: 'HTTP GET', color: '#6366f1',
-      badge: 'Đang chuyển tiếp',
-      desc: 'Người dùng xem chi tiết đơn hàng #001. API Gateway tiếp nhận và định tuyến tới Order Service.',
-      resilienceEffect: 'Đường truyền bình thường, chưa kích hoạt cơ chế phòng thủ nào.'
-    },
-    {
-      title: 'Bước 2: Order Service gọi User Service',
-      from: 'order', to: 'user', status: 'processing',
-      action: 'OpenFeign gọi downstream', code: 'GET /api/users/1', color: '#6366f1',
-      badge: 'Gọi đối tác',
-      desc: 'Order Service dùng Feign Client gọi sang User Service (:8081) để tra cứu họ tên và email của khách.',
-      resilienceEffect: 'Luồng xử lý (worker thread) đang chờ phản hồi từ User Service.'
-    },
-    {
-      title: 'Bước 3: User Service phản hồi bình thường',
-      from: 'user', to: 'order', status: 'returning',
-      action: 'User Service trả 200 OK', code: 'HTTP 200', color: '#22c55e',
-      badge: 'Dữ liệu hợp lệ',
-      desc: 'User Service xử lý truy vấn database thành công và trả về dữ liệu khách hàng đầy đủ.',
-      resilienceEffect: 'Không có lỗi, thời gian phản hồi nhanh (~15ms).'
-    },
-    {
-      title: 'Bước 4: Hoàn tất đơn hàng cho Client',
-      from: 'order', to: 'client', status: 'success',
-      action: 'Trả về Client trọn vẹn', code: 'HTTP 200 OK', color: '#22c55e',
-      badge: 'Hoàn thành 200 OK',
-      desc: 'Order Service gộp dữ liệu đơn hàng cùng dữ liệu khách hàng và trả về cho trình duyệt.',
-      resilienceEffect: 'Hệ thống hoạt động ở trạng thái lý tưởng.'
-    }
-  ],
-
-  timeout: [
-    {
-      title: 'Bước 1: Tiếp nhận yêu cầu kiểm tra Timeout',
-      from: 'client', to: 'order', status: 'sending',
-      action: 'Gửi request đơn hàng', code: 'GET /feign-timeout/1', color: '#6366f1',
-      badge: 'Bắt đầu luồng',
-      desc: 'Client yêu cầu lấy thông tin đơn hàng trong tình huống User Service đang gặp sự cố nghẽn.',
-      resilienceEffect: 'Order Service bắt đầu cấp phát 1 worker thread cho request này.'
-    },
-    {
-      title: 'Bước 2: Gọi User Service (Bị nghẽn 4000ms)',
-      from: 'order', to: 'user', status: 'delayed',
-      action: 'Đang ngâm chờ phản hồi...', code: 'Chậm 4000ms', color: '#f59e0b',
-      badge: 'User Service bị đơ',
-      desc: 'User Service bị quá tải I/O giả lập, giữ kết nối và không phản hồi trong 4000ms.',
-      resilienceEffect: 'Nếu KHÔNG CÓ Timeout: Thread của Order Service sẽ bị giam giữ vô thời hạn, nhanh chóng làm cạn kiệt Connection Pool!'
-    },
-    {
-      title: 'Bước 3: Mốc Timeout kích hoạt — Cắt đứt kết nối!',
-      from: 'order', to: 'user', status: 'cut',
-      action: 'Lưỡi cắt Timeout can thiệp', code: 'Cắt sau 1000ms / 1500ms', color: '#ef4444',
-      badge: 'CẮT ĐỨT (TIMEOUT)',
-      desc: 'Resilience Kit / Feign Client đo thấy thời gian vượt ngưỡng cấu hình (1.0s hoặc 1.5s). Lập tức ngắt kết nối!',
-      resilienceEffect: 'Hành động sinh tồn: Đơn phương hủy chờ đợi, ngay lập tức THU HỒI LUỒNG XỬ LÝ (Worker Thread) để phục vụ các yêu cầu khác.'
-    },
-    {
-      title: 'Bước 4: Phản hồi lỗi kiểm soát cho Client',
-      from: 'order', to: 'client', status: 'fail-fast',
-      action: 'Trả mã lỗi Timeout có kiểm soát', code: 'HTTP 504 / 500', color: '#ef4444',
-      badge: 'Giải phóng luồng thành công',
-      desc: 'Order Service trả về HTTP 504 (hoặc 500 Feign Timeout). Thời gian phản hồi đúng bằng mốc timeout cấu hình thay vì phải chờ 4s.',
-      resilienceEffect: 'Bảo vệ thành công Order Service không bị sập theo (ngăn chặn Cascading Failure).'
-    }
-  ],
-
-  retry: [
-    {
-      title: 'Bước 1: Lần thử 1 — Gặp lỗi sự cố thoáng qua',
-      from: 'order', to: 'user', status: 'retry-fail',
-      action: 'Lần 1: Gọi User Service', code: 'Lỗi HTTP 500 💥', color: '#ef4444',
-      badge: 'Thất bại lần 1',
-      desc: 'Order Service gọi User Service. Do mạng rung lắc hoặc service mới reboot, User Service trả về lỗi 500.',
-      resilienceEffect: 'Cơ chế Retry can thiệp: Giữ lại lỗi, CHƯA BÁO VỀ CLIENT để bảo vệ trải nghiệm người dùng.'
-    },
-    {
-      title: 'Bước 2: Exponential Backoff (Chờ 500ms)',
-      from: 'order', to: 'order', status: 'waiting',
-      action: 'Tạm dừng 500ms trước khi thử lại', code: 'Wait 500ms ⏳', color: '#f59e0b',
-      badge: 'Đếm lùi Backoff',
-      desc: 'Hệ thống không gọi lại dồn dập ngay lập tức mà áp dụng thuật toán Exponential Backoff nghỉ 500ms để đối tác kịp phục hồi.',
-      resilienceEffect: 'Tránh gây bão tải ngược lên downstream (Anti-Storm).'
-    },
-    {
-      title: 'Bước 3: Lần thử 2 — Vẫn gặp lỗi thoáng qua',
-      from: 'order', to: 'user', status: 'retry-fail',
-      action: 'Lần 2: Gọi lại User Service', code: 'Lỗi HTTP 500 💥', color: '#ef4444',
-      badge: 'Thất bại lần 2',
-      desc: 'Lần thử thứ hai vẫn trả về HTTP 500 (chưa hết 2 lần lỗi giả lập).',
-      resilienceEffect: 'Retry tiếp tục nhân đôi thời gian chờ: Backoff 1000ms.'
-    },
-    {
-      title: 'Bước 4: Lần thử 3 — Tự cứu vãn thành công!',
-      from: 'order', to: 'user', status: 'processing',
-      action: 'Lần 3: Gọi lại lần cuối', code: 'HTTP 200 OK ✅', color: '#22c55e',
-      badge: 'Tự cứu thành công!',
-      desc: 'Sau 1000ms, Order Service thử lại lần 3. Lúc này sự cố đã qua, User Service phản hồi dữ liệu khách hàng hợp lệ!',
-      resilienceEffect: 'Yêu cầu được tự động cứu chữa thành công trong cùng 1 request.'
-    },
-    {
-      title: 'Bước 5: Trả dữ liệu 200 OK cho Client',
-      from: 'order', to: 'client', status: 'success',
-      action: 'Trả kết quả hoàn hảo cho Client', code: 'HTTP 200 OK', color: '#22c55e',
-      badge: 'Client hoàn toàn hài lòng',
-      desc: 'Client nhận được kết quả đơn hàng đầy đủ với mã HTTP 200. Khách hàng hoàn toàn không hề nhận ra hệ thống vừa vượt qua 2 lần lỗi!',
-      resilienceEffect: 'Đạt độ kiên cường tối đa trước các lỗi rung lắc mạng (Transient Faults).'
-    }
-  ],
-
-  bulkhead: [
-    {
-      title: 'Bước 1: Bão lưu lượng 10 request ập đến cùng lúc',
-      from: 'client', to: 'order', status: 'burst',
-      action: '10 Request đồng thời gửi đến', code: '10 Concurrent Requests', color: '#6366f1',
-      badge: 'Lưu lượng tăng đột biến',
-      desc: '10 khách hàng đồng thời gửi lệnh gọi. Mỗi request cần 2 giây để hoàn thành.',
-      resilienceEffect: 'Nếu không giới hạn, 10 request này sẽ chiếm trọn connection pool, khiến các API khác bị nghẽn hoàn toàn!'
-    },
-    {
-      title: 'Bước 2: Vách ngăn Bulkhead kiểm soát hạn ngạch',
-      from: 'order', to: 'order', status: 'inspecting',
-      action: 'Kiểm tra Semaphore: Max 3 slots', code: 'Max Concurrent = 3', color: '#f59e0b',
-      badge: 'Cách ly tài nguyên',
-      desc: 'Vách ngăn Bulkhead cách ly chỉ cấp đúng 3 giấy phép (slots) cho API này. 7 lượt dư thừa không được phép vào.',
-      resilienceEffect: 'Đảm bảo tài nguyên server còn trống cho các nghiệp vụ thanh toán, đăng nhập...'
-    },
-    {
-      title: 'Bước 3: Từ chối 7 lượt quá tải ngay lập tức (1ms)',
-      from: 'order', to: 'client', status: 'rejected',
-      action: '7 lượt bị dội ngược ngay', code: '7x HTTP 429 ⛔', color: '#ef4444',
-      badge: 'Từ chối quá tải (1ms)',
-      desc: '7 request vượt quá hạn ngạch bị vách ngăn Bulkhead chặn đứng ở cửa và trả về HTTP 429 trong ~1ms (0 giây chờ đợi).',
-      resilienceEffect: 'Không để request rác ngâm lâu trong RAM hoặc Thread Pool.'
-    },
-    {
-      title: 'Bước 4: 3 lượt hợp lệ hoàn tất an toàn',
-      from: 'order', to: 'client', status: 'success',
-      action: '3 lượt trong slot hoàn tất', code: '3x HTTP 200 OK ✅', color: '#22c55e',
-      badge: 'Bảo vệ thành công',
-      desc: '3 request được cấp slot xử lý xong sau 2000ms và trả về kết quả 200 OK an toàn.',
-      resilienceEffect: 'Hệ thống vận hành ổn định ngay cả trong tâm bão lưu lượng.'
-    }
-  ],
-
-  breaker: [
-    {
-      title: 'Bước 1: Mạch CLOSED — Request lưu thông bình thường',
-      from: 'order', to: 'user', status: 'processing',
-      action: 'Mạch CLOSED (Đóng)', code: 'Circuit: CLOSED 🟢', color: '#22c55e',
-      badge: 'Bình thường',
-      desc: 'Cầu dao đang ở trạng thái CLOSED. Mọi request được chuyển tiếp trực tiếp sang User Service.',
-      resilienceEffect: 'Hệ thống liên tục thống kê tỷ lệ lỗi trong cửa sổ trượt (sliding window).'
-    },
-    {
-      title: 'Bước 2: Downstream lỗi 100% — Tỷ lệ lỗi vượt ngưỡng',
-      from: 'user', to: 'order', status: 'error-storm',
-      action: 'Lỗi 500 liên tiếp từ User Service', code: 'Failure Rate > 50%', color: '#ef4444',
-      badge: 'Phát hiện sập nguồn',
-      desc: 'User Service liên tục sập nguồn và trả về mã lỗi 500 cho mọi cuộc gọi.',
-      resilienceEffect: 'CircuitBreaker nhận thấy đối tác đã chết, bắt đầu quy trình kích hoạt cầu dao an toàn.'
-    },
-    {
-      title: 'Bước 3: CẦU DAO BẬT MỞ (OPEN) — Cắt đứt mạch điện!',
-      from: 'order', to: 'order', status: 'breaker-open',
-      action: 'Bung cầu dao sang OPEN', code: 'Circuit: OPEN 🔴', color: '#ef4444',
-      badge: 'CẦU DAO BUNG MẠCH',
-      desc: 'Cầu dao bung mở hoàn toàn! Trạng thái chuyển sang OPEN để cô lập hoàn toàn User Service.',
-      resilienceEffect: 'Từ thời điểm này, không còn bất kỳ request nào được phép chạm vào User Service nữa!'
-    },
-    {
-      title: 'Bước 4: Chặn đứng mọi request mới bằng Fail-Fast (14ms)',
-      from: 'order', to: 'client', status: 'fail-fast',
-      action: 'Từ chối tức thì ở cửa Order Service', code: 'HTTP 503 Fail-Fast ⚡', color: '#ef4444',
-      badge: 'Bảo vệ sinh tồn (0ms/14ms)',
-      desc: 'Request mới tới gặp cầu dao OPEN lập tức bị dội ngược trở ra với mã HTTP 503. Số lần gọi User Service: 0 LẦN!',
-      resilienceEffect: 'Cứu Order Service không bị cạn luồng; Cho User Service thời gian thở để tự phục hồi; Chống sập dây chuyền (Cascading Failure).'
-    },
-    {
-      title: 'Bước 5: Chuyển HALF-OPEN & Thử nghiệm chữa lành',
-      from: 'order', to: 'user', status: 'half-open',
-      action: 'Mạch hé mở cho 1 request thăm dò', code: 'Circuit: HALF_OPEN 🟡', color: '#f59e0b',
-      badge: 'Thăm dò hồi phục',
-      desc: 'Sau thời gian chờ quy định, cầu dao chuyển sang HALF-OPEN và cho phép 1 lượt gọi thử nghiệm duy nhất đi qua.',
-      resilienceEffect: 'Nếu lượt gọi này thành công, cầu dao tự động đóng sập lại CLOSED (Xanh) phục hồi hoàn toàn.'
-    }
-  ],
-
-  converge: [
-    {
-      title: 'Pha 1: Bulkhead lọc bão lưu lượng',
-      from: 'client', to: 'order', status: 'converge-p1',
-      action: 'Bulkhead tiếp nhận 6 request', code: 'Pha 1 · Bulkhead', color: '#6366f1',
-      badge: 'Tầng 3: Bulkhead lọc tải',
-      desc: 'Gửi 6 request song song. Bulkhead cấp 3 slot chạy (200 OK) và từ chối ngay 3 request quá tải bằng mã 429.',
-      resilienceEffect: 'Tầng Bulkhead bảo vệ Order Service không bị ngập lụt tài nguyên.'
-    },
-    {
-      title: 'Pha 2: Retry tự cứu khi gặp lỗi chập chờn',
-      from: 'order', to: 'user', status: 'converge-p2',
-      action: 'Retry thử lại 3 lần', code: 'Pha 2 · Retry 200 OK', color: '#22c55e',
-      badge: 'Tầng 1: Retry tự cứu',
-      desc: 'User Service lỗi 2 lần đầu (500). Tầng Retry ngoài cùng tự động thử lại lần 3 và lấy được dữ liệu thành công.',
-      resilienceEffect: 'Tầng Retry tự xóa bỏ tác động của sự cố thoáng qua đối với người dùng.'
-    },
-    {
-      title: 'Pha 3: Feign Timeout cắt đứt trễ & Bung mạch',
-      from: 'order', to: 'user', status: 'converge-p3',
-      action: 'Feign ngắt sau 1s, kích hoạt CB', code: 'Pha 3 · Feign Cut (504)', color: '#ef4444',
-      badge: 'Tầng 4: Feign Timeout',
-      desc: 'User Service bị treo 3s. Tầng Feign Timeout cắt đứt chính xác sau 1000ms. Lỗi này được ghi nhận khiến Circuit Breaker BUNG OPEN!',
-      resilienceEffect: 'Feign Timeout chuyển giao tín hiệu nguy cấp cho Circuit Breaker.'
-    },
-    {
-      title: 'Pha 4: Circuit Breaker chặn đứng bằng Fail-Fast (14ms)',
-      from: 'order', to: 'client', status: 'converge-p4',
-      action: 'Từ chối 503, Retry dừng hoạt động', code: 'Pha 4 · Fail-Fast (503)', color: '#ef4444',
-      badge: 'Tầng 2: Circuit Breaker OPEN',
-      desc: 'Mạch đang OPEN. Request mới tới bị dội ngược ngay trong 14ms (HTTP 503). Retry tuyệt đối không gọi lại để chống bão Retry Storm!',
-      resilienceEffect: 'Sự phối hợp hoàn hảo: CB bảo vệ downstream, dập tắt bão Retry.'
-    },
-    {
-      title: 'Pha 5: Tự chữa lành & Khép mạch về 200 OK',
-      from: 'order', to: 'user', status: 'converge-p5',
-      action: 'Khôi phục, thăm dò thành công', code: 'Pha 5 · Self-Healing (200)', color: '#22c55e',
-      badge: 'Tự chữa lành hoàn tất',
-      desc: 'User Service được khôi phục. Sau 3s mạch chuyển HALF_OPEN, gửi 1 request thăm dò thành công 200 OK và đóng mạch về CLOSED!',
-      resilienceEffect: 'Khép lại trọn vẹn 100% vòng đời kiên cường của hệ thống Microservices.'
-    }
-  ],
-
-  fallback: [
-    {
-      title: 'Bước 1: Downstream gặp sự cố nghiêm trọng',
-      from: 'order', to: 'user', status: 'error-storm',
-      action: 'User Service mất kết nối', code: 'Downstream Failed', color: '#ef4444',
-      badge: 'Sự cố hệ thống',
-      desc: 'User Service bị sập hoặc ngắt mạch, không thể cung cấp dữ liệu khách hàng.',
-      resilienceEffect: 'Nếu KHÔNG CÓ Fallback: Khách hàng sẽ thấy màn hình lỗi 500 hoặc 503 xám xịt.'
-    },
-    {
-      title: 'Bước 2: Cơ chế Fallback can thiệp tức thì',
-      from: 'order', to: 'order', status: 'fallback-active',
-      action: 'Tạo dữ liệu dự phòng an toàn', code: 'Fallback Engaged 🛡️', color: '#22c55e',
-      badge: 'Kích hoạt Fallback',
-      desc: 'Hàm Fallback tự động can thiệp, tạo đối tượng dự phòng an toàn (Guest User: "Khách dự phòng - Chế độ bảo trì").',
-      resilienceEffect: 'Chuyển đổi suy giảm mềm (Graceful Degradation).'
-    },
-    {
-      title: 'Bước 3: Trả về kết quả 200 OK cho khách hàng',
-      from: 'order', to: 'client', status: 'success',
-      action: 'Trả về HTTP 200 với dữ liệu dự phòng', code: 'HTTP 200 OK (Fallback)', color: '#22c55e',
-      badge: 'Trải nghiệm không gián đoạn',
-      desc: 'Người dùng vẫn xem được đơn hàng bình thường kèm thông báo dự phòng mềm mại thay vì màn hình lỗi trắng xóa.',
-      resilienceEffect: 'Bảo toàn trải nghiệm mua sắm và uy tín thương hiệu của ứng dụng.'
-    }
-  ]
-};
-
 export default function FlowVisualizer({ scenarioId, busy, liveStage, breakerState }) {
-  const steps = flowStepsData[scenarioId] || flowStepsData.normal;
-  const [currentStepIdx, setCurrentStepIdx] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const playTimerRef = useRef(null);
+  const canvasRef = useRef(null);
+  const [isPlaying, setIsPlaying] = useState(true);
+  const [currentNarrative, setCurrentNarrative] = useState({
+    phase: 'Bắt đầu',
+    action: 'Đang chuẩn bị',
+    desc: 'Hạt request chuẩn bị khởi hành từ Client...',
+    resilience: 'Cơ chế sẵn sàng bảo vệ.',
+    statusColor: '#6366f1',
+    code: 'INIT'
+  });
 
-  // Reset or adjust index when scenario changes
+  // Animation timeline state (in milliseconds)
+  const animTimeRef = useRef(0);
+  const isPlayingRef = useRef(true);
+  const lastFrameTimeRef = useRef(performance.now());
+  const reqIdRef = useRef(null);
+
+  // Sync isPlaying with ref
   useEffect(() => {
-    setCurrentStepIdx(0);
-    setIsPlaying(false);
-    if (playTimerRef.current) clearInterval(playTimerRef.current);
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
+
+  // Reset timeline on scenario change
+  useEffect(() => {
+    animTimeRef.current = 0;
+    setIsPlaying(true);
   }, [scenarioId]);
 
-  // Auto step if busy with real API
+  // Handle Canvas Rendering Engine
   useEffect(() => {
-    if (busy) {
-      setIsPlaying(false);
-      // Advance steps as stage progresses
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+
+    // High DPI scaling
+    const dpr = window.devicePixelRatio || 1;
+    const width = 900;
+    const height = 280;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    ctx.scale(dpr, dpr);
+
+    // Node Positions
+    const gwNode = { x: 130, y: 140, w: 140, h: 100 };
+    const orderNode = { x: 450, y: 140, w: 210, h: 140 };
+    const userNode = { x: 770, y: 140, w: 140, h: 100 };
+
+    // Easing helpers
+    const easeInOut = (t) => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+    const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+    const easeInQuad = (t) => t * t;
+
+    function render(now) {
+      const delta = Math.min(now - lastFrameTimeRef.current, 60);
+      lastFrameTimeRef.current = now;
+
+      if (isPlayingRef.current) {
+        animTimeRef.current += delta;
+      }
+
+      // Loop duration based on scenario
+      let loopDuration = 6000;
+      if (scenarioId === 'retry') loopDuration = 9000;
+      else if (scenarioId === 'timeout') loopDuration = 6500;
+      else if (scenarioId === 'bulkhead') loopDuration = 6500;
+      else if (scenarioId === 'breaker') loopDuration = 8000;
+      else if (scenarioId === 'converge') loopDuration = 12000;
+
+      const t = animTimeRef.current % loopDuration;
+
+      // Clear Canvas
+      ctx.clearRect(0, 0, width, height);
+
+      // Background Grid Effect
+      ctx.strokeStyle = '#1b1738';
+      ctx.lineWidth = 1;
+      for (let x = 0; x < width; x += 40) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+      }
+      for (let y = 0; y < height; y += 40) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+      }
+
+      // Draw Main Pipeline Pipes
+      // Pipe 1: Gateway -> Order
+      ctx.beginPath();
+      ctx.moveTo(gwNode.x + gwNode.w / 2, gwNode.y);
+      ctx.lineTo(orderNode.x - orderNode.w / 2, orderNode.y);
+      ctx.strokeStyle = '#2d2856';
+      ctx.lineWidth = 8;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+
+      // Flowing glow dots in pipe 1
+      const flowOffset1 = (animTimeRef.current * 0.08) % 20;
+      ctx.beginPath();
+      ctx.setLineDash([4, 16]);
+      ctx.lineDashOffset = -flowOffset1;
+      ctx.moveTo(gwNode.x + gwNode.w / 2, gwNode.y);
+      ctx.lineTo(orderNode.x - orderNode.w / 2, orderNode.y);
+      ctx.strokeStyle = '#6366f1';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Pipe 2: Order -> User
+      const pipe2StartX = orderNode.x + orderNode.w / 2;
+      const pipe2EndX = userNode.x - userNode.w / 2;
+
+      let pipe2Cut = false;
+      let pipe2Blocked = false;
+
+      // Check cuts/blocks according to scenario
+      if (scenarioId === 'timeout' && t > 2500 && t < 5500) pipe2Cut = true;
+      if (scenarioId === 'breaker' && t > 2800 && t < 6500) pipe2Blocked = true;
       if (scenarioId === 'converge') {
-        if (liveStage.includes('Pha 1')) setCurrentStepIdx(0);
-        else if (liveStage.includes('Pha 2')) setCurrentStepIdx(1);
-        else if (liveStage.includes('Pha 3')) setCurrentStepIdx(2);
-        else if (liveStage.includes('Pha 4')) setCurrentStepIdx(3);
-        else if (liveStage.includes('Pha 5')) setCurrentStepIdx(4);
+        const pT = (t % 12000);
+        if (pT > 5000 && pT < 7200) pipe2Cut = true;
+        if (pT > 7200 && pT < 9600) pipe2Blocked = true;
+      }
+
+      ctx.beginPath();
+      ctx.moveTo(pipe2StartX, orderNode.y);
+      ctx.lineTo(pipe2EndX, userNode.y);
+      ctx.strokeStyle = pipe2Cut ? '#ef444433' : pipe2Blocked ? '#374151' : '#2d2856';
+      ctx.lineWidth = 8;
+      ctx.stroke();
+
+      if (!pipe2Cut && !pipe2Blocked) {
+        const flowOffset2 = (animTimeRef.current * 0.08) % 20;
+        ctx.beginPath();
+        ctx.setLineDash([4, 16]);
+        ctx.lineDashOffset = -flowOffset2;
+        ctx.moveTo(pipe2StartX, orderNode.y);
+        ctx.lineTo(pipe2EndX, userNode.y);
+        ctx.strokeStyle = '#a855f7';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // Draw Scissors or Barrier if cut/blocked
+      if (pipe2Cut) {
+        const cutX = (pipe2StartX + pipe2EndX) / 2;
+        ctx.save();
+        ctx.translate(cutX, orderNode.y);
+        // Blade animation
+        const bladeAngle = Math.sin(animTimeRef.current * 0.015) * 0.2;
+        ctx.font = '24px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('✂️', 0, -2);
+        ctx.fillStyle = '#ef4444';
+        ctx.font = 'bold 11px system-ui';
+        ctx.fillText('NGẮT TIMEOUT (1s)', 0, -26);
+        ctx.restore();
+      }
+
+      if (pipe2Blocked) {
+        const barrierX = (pipe2StartX + pipe2EndX) / 2;
+        ctx.save();
+        ctx.translate(barrierX, orderNode.y);
+        ctx.fillStyle = '#ef4444';
+        ctx.shadowColor = '#ef4444';
+        ctx.shadowBlur = 10;
+        ctx.fillRect(-12, -25, 24, 50);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 16px system-ui';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('⛔', 0, 0);
+        ctx.font = 'bold 10px system-ui';
+        ctx.fillStyle = '#fca5a5';
+        ctx.fillText('CHẶN ĐỨNG (0 LƯỢT)', 0, -32);
+        ctx.restore();
+      }
+
+      // Draw Nodes
+      // Node 1: API Gateway
+      drawServiceNode(ctx, gwNode, '🌐 API Gateway', ':8080 · Client', '#4338ca', '#1a1640');
+
+      // Node 2: Order Service (Resilience Hub)
+      drawServiceNode(ctx, orderNode, '📦 Order Service (:8082)', 'Trung tâm điều phối & Bảo vệ', '#6366f1', '#161331');
+
+      // Inside Order: Active Guard Visual
+      drawGuardBadge(ctx, orderNode.x, orderNode.y + 12, scenarioId, t, isCircuitOpen(scenarioId, t, breakerState));
+
+      // Node 3: User Service
+      const isUserError = (scenarioId === 'retry' && t < 5500) ||
+                          (scenarioId === 'timeout' && t > 1200 && t < 3800) ||
+                          (scenarioId === 'breaker' && t > 1500 && t < 6500) ||
+                          (scenarioId === 'converge' && t > 4800 && t < 9600);
+      drawServiceNode(
+        ctx, userNode, '👤 User Service',
+        isUserError ? 'Giả lập sự cố (:8081)' : 'Hoạt động tốt (:8081)',
+        isUserError ? '#e11d48' : '#10b981', '#1d152e'
+      );
+
+      // SCENARIO ANIMATIONS (Dynamic fluid packets & particles)
+      let narrative = { ...currentNarrative };
+
+      if (scenarioId === 'normal') {
+        narrative = animateNormal(ctx, t, gwNode, orderNode, userNode);
       } else if (scenarioId === 'timeout') {
-        if (liveStage.includes('User Service')) setCurrentStepIdx(1);
-        else if (liveStage.includes('Feign')) setCurrentStepIdx(2);
-        else if (liveStage.includes('TimeLimiter')) setCurrentStepIdx(3);
+        narrative = animateTimeout(ctx, t, gwNode, orderNode, userNode);
       } else if (scenarioId === 'retry') {
-        if (liveStage.includes('thử lại')) setCurrentStepIdx((prev) => Math.min(prev + 1, steps.length - 1));
+        narrative = animateRetry(ctx, t, gwNode, orderNode, userNode);
+      } else if (scenarioId === 'bulkhead') {
+        narrative = animateBulkhead(ctx, t, gwNode, orderNode, userNode);
+      } else if (scenarioId === 'breaker') {
+        narrative = animateCircuitBreaker(ctx, t, gwNode, orderNode, userNode);
+      } else if (scenarioId === 'converge') {
+        narrative = animateConverge(ctx, t, gwNode, orderNode, userNode);
+      } else if (scenarioId === 'fallback') {
+        narrative = animateFallback(ctx, t, gwNode, orderNode, userNode);
       }
-    }
-  }, [busy, liveStage, scenarioId, steps.length]);
 
-  // Interactive play / pause loop
-  useEffect(() => {
-    if (isPlaying) {
-      playTimerRef.current = setInterval(() => {
-        setCurrentStepIdx((prev) => {
-          if (prev >= steps.length - 1) {
-            setIsPlaying(false);
-            return prev;
-          }
-          return prev + 1;
-        });
-      }, 2600);
-    } else {
-      if (playTimerRef.current) clearInterval(playTimerRef.current);
+      setCurrentNarrative(narrative);
+
+      reqIdRef.current = requestAnimationFrame(render);
     }
+
+    reqIdRef.current = requestAnimationFrame(render);
+
     return () => {
-      if (playTimerRef.current) clearInterval(playTimerRef.current);
+      if (reqIdRef.current) cancelAnimationFrame(reqIdRef.current);
     };
-  }, [isPlaying, steps.length]);
+  }, [scenarioId, breakerState]);
 
-  const step = steps[currentStepIdx] || steps[0];
-
-  function togglePlay() {
-    if (isPlaying) {
-      setIsPlaying(false);
-    } else {
-      if (currentStepIdx >= steps.length - 1) {
-        setCurrentStepIdx(0);
-      }
-      setIsPlaying(true);
+  function isCircuitOpen(scId, t, realBreaker) {
+    if (scId === 'breaker') return (t > 2400 && t < 6500);
+    if (scId === 'converge') {
+      const pT = (t % 12000);
+      return (pT > 6500 && pT < 9800);
     }
+    return realBreaker === 'OPEN';
   }
 
-  function nextStep() {
-    setIsPlaying(false);
-    setCurrentStepIdx((prev) => Math.min(prev + 1, steps.length - 1));
+  // Draw node helper
+  function drawServiceNode(ctx, node, title, subtitle, strokeColor, fillColor) {
+    ctx.save();
+    ctx.fillStyle = fillColor;
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = 2;
+    ctx.shadowColor = strokeColor;
+    ctx.shadowBlur = 8;
+
+    const r = 12;
+    const x = node.x - node.w / 2;
+    const y = node.y - node.h / 2;
+    ctx.beginPath();
+    ctx.roundRect(x, y, node.w, node.h, r);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.stroke();
+
+    // Title
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 13px system-ui, -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(title, node.x, y + 14);
+
+    // Subtitle
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '10px system-ui, -apple-system, sans-serif';
+    ctx.fillText(subtitle, node.x, y + 33);
+    ctx.restore();
   }
 
-  function prevStep() {
-    setIsPlaying(false);
-    setCurrentStepIdx((prev) => Math.max(prev - 1, 0));
+  // Draw guard badge inside Order Service
+  function drawGuardBadge(ctx, cx, cy, scId, t, cbOpen) {
+    ctx.save();
+    ctx.fillStyle = '#0f0c24';
+    ctx.strokeStyle = '#3730a3';
+    ctx.lineWidth = 1.2;
+    const bw = 176;
+    const bh = 60;
+    ctx.beginPath();
+    ctx.roundRect(cx - bw / 2, cy - bh / 2, bw, bh, 8);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    if (scId === 'timeout') {
+      ctx.fillStyle = '#f59e0b';
+      ctx.font = 'bold 11px system-ui';
+      ctx.fillText('⏱️ Feign Timeout (1.0s)', cx, cy - 12);
+      ctx.fillStyle = t > 2500 ? '#ef4444' : '#94a3b8';
+      ctx.font = '10px system-ui';
+      ctx.fillText(t > 2500 ? 'Đã cắt luồng bảo vệ!' : 'Đang theo dõi thời gian...', cx, cy + 12);
+    } else if (scId === 'retry') {
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = 'bold 11px system-ui';
+      ctx.fillText('🔄 Resilience4j Retry', cx, cy - 12);
+      ctx.fillStyle = '#e2e8f0';
+      ctx.font = '10px system-ui';
+      let attemptText = 'Chuẩn bị';
+      if (t < 2500) attemptText = 'Lần 1: Lỗi 500';
+      else if (t < 5500) attemptText = 'Lần 2: Backoff & thử lại';
+      else attemptText = 'Lần 3: Tự cứu thành công ✅';
+      ctx.fillText(attemptText, cx, cy + 12);
+    } else if (scId === 'bulkhead') {
+      ctx.fillStyle = '#c084fc';
+      ctx.font = 'bold 11px system-ui';
+      ctx.fillText('🛡️ Bulkhead (3 Slots)', cx, cy - 12);
+      ctx.fillStyle = '#fde047';
+      ctx.font = '10px system-ui';
+      ctx.fillText('3 Cho phép · 7 Dội lại (429)', cx, cy + 12);
+    } else if (scId === 'breaker') {
+      ctx.fillStyle = cbOpen ? '#ef4444' : '#10b981';
+      ctx.font = 'bold 11px system-ui';
+      ctx.fillText(`⚡ Cầu dao: ${cbOpen ? 'OPEN (BẬT MỞ) 🔴' : 'CLOSED 🟢'}`, cx, cy - 12);
+      ctx.fillStyle = '#cbd5e1';
+      ctx.font = '10px system-ui';
+      ctx.fillText(cbOpen ? 'Chặn đứng Fail-Fast (14ms)' : 'Cho phép lưu thông bình thường', cx, cy + 12);
+    } else if (scId === 'converge') {
+      ctx.fillStyle = '#818cf8';
+      ctx.font = 'bold 11px system-ui';
+      ctx.fillText('🛡️ 4 Tầng lồng nhau', cx, cy - 12);
+      ctx.fillStyle = '#34d399';
+      ctx.font = '10px system-ui';
+      ctx.fillText('Retry ➔ CB ➔ Bulkhead ➔ Feign', cx, cy + 12);
+    } else {
+      ctx.fillStyle = '#10b981';
+      ctx.font = 'bold 11px system-ui';
+      ctx.fillText('✅ OpenFeign Chuẩn', cx, cy - 10);
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '10px system-ui';
+      ctx.fillText('Giao tiếp trực tiếp', cx, cy + 12);
+    }
+    ctx.restore();
   }
 
-  function resetFlow() {
-    setIsPlaying(false);
-    setCurrentStepIdx(0);
+  // Draw glowing moving packet
+  function drawPacket(ctx, x, y, color, label, radius = 10, shadow = true) {
+    ctx.save();
+    if (shadow) {
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 14;
+    }
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+
+    // Inner bright core
+    ctx.beginPath();
+    ctx.arc(x, y, radius * 0.45, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+
+    if (label) {
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = color;
+      ctx.font = 'bold 10px system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillText(label, x, y - radius - 5);
+    }
+    ctx.restore();
   }
 
-  // Calculate packet position along diagram
-  // Client = 10%, Order = 50%, User = 90%
-  let packetX = 10;
-  let packetY = 50;
-  let packetVisible = true;
-  let connectionCut = false;
-  let connectionBlocked = false;
-
-  if (step.status === 'sending') {
-    packetX = 30; // traveling Client -> Order
-  } else if (step.status === 'processing') {
-    packetX = 70; // traveling Order -> User
-  } else if (step.status === 'delayed') {
-    packetX = 86; // stuck at User
-  } else if (step.status === 'cut') {
-    packetX = 64; // cut at bridge
-    connectionCut = true;
-  } else if (step.status === 'returning') {
-    packetX = 35; // returning to Order
-  } else if (step.status === 'success') {
-    packetX = 14; // returned back to Client
-  } else if (step.status === 'fail-fast') {
-    packetX = 46; // bounced at Order, retreating
-    connectionBlocked = true;
-  } else if (step.status === 'retry-fail') {
-    packetX = 82; // failed at User
-  } else if (step.status === 'waiting') {
-    packetX = 50; // held in Order
-  } else if (step.status === 'burst') {
-    packetX = 32;
-  } else if (step.status === 'rejected') {
-    packetX = 26; // bounced back
-  } else if (step.status === 'breaker-open') {
-    packetX = 50;
-    connectionBlocked = true;
-  } else if (step.status === 'half-open') {
-    packetX = 70;
-  } else if (step.status.startsWith('converge')) {
-    if (step.status === 'converge-p1') packetX = 46;
-    else if (step.status === 'converge-p2') packetX = 75;
-    else if (step.status === 'converge-p3') { packetX = 65; connectionCut = true; }
-    else if (step.status === 'converge-p4') { packetX = 42; connectionBlocked = true; }
-    else if (step.status === 'converge-p5') packetX = 85;
+  // --- 1. NORMAL SCENARIO ---
+  function animateNormal(ctx, t, gw, order, user) {
+    // 0 -> 2000: Gateway to User
+    // 2000 -> 4000: User to Gateway
+    let px, py, color, label, statusColor, desc, action, code, resilience;
+    if (t < 2000) {
+      const p = t / 2000;
+      px = gw.x + p * (user.x - gw.x);
+      py = gw.y;
+      color = '#6366f1';
+      label = 'GET /api/orders/1';
+      statusColor = '#6366f1';
+      action = 'Gửi request';
+      desc = 'Khách hàng gửi yêu cầu xem đơn hàng #001. Request đang lướt mượt mà qua Order Service sang User Service.';
+      code = 'HTTP GET';
+      resilience = 'Đường truyền ổn định, không có lỗi giả lập.';
+    } else {
+      const p = (t - 2000) / 2000;
+      px = user.x - p * (user.x - gw.x);
+      py = gw.y;
+      color = '#10b981';
+      label = '200 OK (User Data)';
+      statusColor = '#10b981';
+      action = 'Phản hồi thành công';
+      desc = 'User Service xử lý xong và phản hồi dữ liệu khách hàng. Order Service gộp dữ liệu đơn hàng và trả về Client.';
+      code = 'HTTP 200 OK';
+      resilience = 'Giao dịch hoàn tất thành công trong ~15ms.';
+    }
+    drawPacket(ctx, px, py, color, label, 11);
+    return { phase: t < 2000 ? 'Lượt đi (Request)' : 'Lượt về (Response)', action, desc, resilience, statusColor, code };
   }
 
-  const isCircuitOpen = breakerState === 'OPEN' || step.status === 'breaker-open' || step.status === 'converge-p4';
+  // --- 2. TIMEOUT SCENARIO ---
+  function animateTimeout(ctx, t, gw, order, user) {
+    let px = gw.x, py = gw.y, color = '#6366f1', label = 'GET', statusColor = '#6366f1', action = '', desc = '', code = '', resilience = '';
+
+    if (t < 1500) {
+      // Traveling Gateway -> User
+      const p = t / 1500;
+      px = gw.x + p * (user.x - gw.x);
+      py = gw.y;
+      color = '#6366f1';
+      label = 'GET';
+      action = 'Đang chuyển tiếp';
+      desc = 'Request từ Order Service gửi sang User Service (:8081).';
+      resilience = 'Order Service cấp phát 1 luồng (thread) để xử lý yêu cầu này.';
+      code = 'START';
+      statusColor = '#6366f1';
+    } else if (t < 3500) {
+      // Stuck at User Service with rotating countdown gauge
+      px = user.x;
+      py = user.y;
+      color = '#f59e0b';
+      label = 'BỊ NGHẼN 4s';
+
+      // Draw countdown circle
+      const waitP = (t - 1500) / 2000;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(user.x, user.y, 28, 0, Math.PI * 2);
+      ctx.strokeStyle = '#332a54';
+      ctx.lineWidth = 4;
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(user.x, user.y, 28, -Math.PI / 2, -Math.PI / 2 + waitP * Math.PI * 2);
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      ctx.restore();
+
+      action = 'User Service bị treo 4000ms';
+      desc = 'User Service bị ngâm nghẽn I/O. Order Service bắt đầu kích hoạt đồng hồ đếm ngược Timeout.';
+      resilience = 'Nếu KHÔNG CÓ Timeout, luồng này sẽ bị treo chết trong 4s, nhanh chóng làm sập cạn kiệt Connection Pool!';
+      code = `Chờ ${(waitP * 1000).toFixed(0)}ms / 1000ms`;
+      statusColor = '#f59e0b';
+    } else if (t < 4000) {
+      // Cut event! Scissors cut and spark
+      px = (order.x + user.x) / 2;
+      py = order.y;
+      color = '#ef4444';
+      label = 'CẮT ĐỨT!';
+
+      // Spark particles
+      for (let i = 0; i < 6; i++) {
+        const sparkAngle = (i / 6) * Math.PI * 2 + (t * 0.05);
+        const dist = 18;
+        ctx.fillStyle = '#ef4444';
+        ctx.beginPath();
+        ctx.arc(px + Math.cos(sparkAngle) * dist, py + Math.sin(sparkAngle) * dist, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      action = 'TIMEOUT KÍCH HOẠT (1.0s)';
+      desc = 'Đúng mốc 1000ms, Feign Timeout ra tay cắt phăng kết nối, chủ động hủy việc chờ đợi vô vọng!';
+      resilience = 'Bản chất sinh tồn: Giải phóng ngay luồng worker thread để server không bị nghẽn dây chuyền.';
+      code = 'CẮT 1000ms';
+      statusColor = '#ef4444';
+    } else {
+      // Retreating fast to Gateway with 504
+      const p = (t - 4000) / 2000;
+      px = order.x - p * (order.x - gw.x);
+      py = order.y;
+      color = '#ef4444';
+      label = '504 TIMEOUT';
+      action = 'Trả lỗi kiểm soát & Giải phóng luồng';
+      desc = 'Order Service trả về HTTP 504 Gateway Timeout cho Client sau đúng 1s. Toàn bộ tài nguyên đã được thu hồi an toàn.';
+      resilience = 'Thành công bảo vệ Order Service tiếp tục phục vụ hàng triệu người dùng khác.';
+      code = 'HTTP 504 TIMEOUT';
+      statusColor = '#ef4444';
+    }
+
+    drawPacket(ctx, px, py, color, label, 11);
+    return { phase: 'Topic 1 · Feign Timeout', action, desc, resilience, statusColor, code };
+  }
+
+  // --- 3. RETRY SCENARIO ---
+  function animateRetry(ctx, t, gw, order, user) {
+    let px = order.x, py = order.y, color = '#6366f1', label = '', statusColor = '#6366f1', action = '', desc = '', code = '', resilience = '';
+
+    if (t < 1500) {
+      // Attempt 1: Order -> User
+      const p = t / 1500;
+      px = order.x + p * (user.x - order.x);
+      py = order.y;
+      color = '#6366f1';
+      label = 'Thử lần 1';
+      action = 'Lần thử 1: Gọi User Service';
+      desc = 'Order Service phát lệnh gọi lần 1 sang User Service.';
+      resilience = 'Cơ chế Retry đang theo dõi kết quả.';
+      code = 'LẦN 1';
+    } else if (t < 2300) {
+      // Attempt 1 fail explosion at User
+      px = user.x;
+      py = user.y;
+      color = '#ef4444';
+      label = '500 LỖI 💥';
+      action = 'Lần 1 thất bại (HTTP 500)';
+      desc = 'User Service gặp lỗi tạm thời và phản hồi HTTP 500. Retry chặn lỗi lại, CHƯA BÁO VỀ CLIENT!';
+      resilience = 'Chặn lỗi ở tầng mạng để tự động cứu chữa thay vì làm gián đoạn trải nghiệm người dùng.';
+      code = 'LỖI 500';
+      statusColor = '#ef4444';
+    } else if (t < 3500) {
+      // Backoff 1: 500ms countdown at Order
+      px = order.x;
+      py = order.y;
+      color = '#f59e0b';
+      label = 'Backoff 500ms ⏳';
+      action = 'Tạm dừng 500ms (Exponential Backoff)';
+      desc = 'Hệ thống đệm thời gian nghỉ 500ms để đối tác có thời gian tự hồi phục, tránh bão Retry Storm.';
+      resilience = 'Exponential Backoff: Chống dội tải ngược dồn dập.';
+      code = 'BACKOFF 500ms';
+      statusColor = '#f59e0b';
+    } else if (t < 5000) {
+      // Attempt 2: Order -> User
+      const p = (t - 3500) / 1500;
+      px = order.x + p * (user.x - order.x);
+      py = order.y;
+      color = '#f59e0b';
+      label = 'Thử lần 2';
+      action = 'Lần thử 2: Gọi lại User Service';
+      desc = 'Sau 500ms, Order Service tự động bắn lại request lần 2.';
+      resilience = 'Tự động thử lại không cần người dùng bấm F5.';
+      code = 'LẦN 2';
+    } else if (t < 5800) {
+      // Attempt 2 fail explosion
+      px = user.x;
+      py = user.y;
+      color = '#ef4444';
+      label = '500 LỖI 💥';
+      action = 'Lần 2 vẫn thất bại (HTTP 500)';
+      desc = 'User Service vẫn chưa hồi phục kịp ở lần 2. Retry tiếp tục giữ lại và nhân đôi thời gian chờ lên 1000ms!';
+      resilience = 'Nhân đôi thời gian chờ (1000ms) trước khi buông xuôi.';
+      code = 'LỖI 500';
+      statusColor = '#ef4444';
+    } else if (t < 7200) {
+      // Attempt 3: Order -> User (Success!)
+      const p = (t - 5800) / 1400;
+      px = order.x + p * (user.x - order.x);
+      py = order.y;
+      color = '#10b981';
+      label = 'Thử lần 3';
+      action = 'Lần thử 3: Gọi lại lần cuối';
+      desc = 'Sau 1000ms, Order Service thử lại lần 3. Lúc này User Service đã hoàn tất reboot và trả về dữ liệu thành công!';
+      resilience = 'Cứu vãn thành công yêu cầu từ cõi chết!';
+      code = '200 OK';
+      statusColor = '#10b981';
+    } else {
+      // Smooth return to Gateway
+      const p = (t - 7200) / 1800;
+      px = user.x - p * (user.x - gw.x);
+      py = gw.y;
+      color = '#10b981';
+      label = '200 OK ✅';
+      action = 'Tự cứu thành công — Trả 200 OK';
+      desc = 'Client nhận được dữ liệu hoàn hảo với HTTP 200 OK. Khách hàng hoàn toàn không hề hay biết đã có 2 lần lỗi trước đó!';
+      resilience = 'Độ kiên cường tuyệt đối trước các sự cố mạng chớp nhoáng (Transient Faults).';
+      code = 'HTTP 200 OK';
+      statusColor = '#10b981';
+    }
+
+    drawPacket(ctx, px, py, color, label, 11);
+    return { phase: 'Topic 2 · Resilience4j Retry', action, desc, resilience, statusColor, code };
+  }
+
+  // --- 4. BULKHEAD SCENARIO (10 concurrent packets with physics bounce) ---
+  function animateBulkhead(ctx, t, gw, order, user) {
+    // 10 packets flying towards Order
+    const packetCount = 10;
+    const barrierX = order.x - 20;
+
+    // Draw 3 open slots vs shield wall in Order
+    ctx.save();
+    ctx.fillStyle = '#1e1b4b';
+    ctx.strokeStyle = '#c084fc';
+    ctx.lineWidth = 2;
+
+    // Draw 3 green slots
+    for (let s = 0; s < 3; s++) {
+      const slotY = order.y - 30 + s * 30;
+      ctx.fillStyle = '#064e3b';
+      ctx.strokeStyle = '#10b981';
+      ctx.fillRect(barrierX - 10, slotY - 10, 40, 20);
+      ctx.strokeRect(barrierX - 10, slotY - 10, 40, 20);
+      ctx.fillStyle = '#34d399';
+      ctx.font = 'bold 9px system-ui';
+      ctx.fillText(`Slot ${s + 1}`, barrierX + 10, slotY + 3);
+    }
+
+    // Draw Bulkhead Shield Barrier
+    ctx.fillStyle = '#dc2626';
+    ctx.shadowColor = '#ef4444';
+    ctx.shadowBlur = 10;
+    ctx.fillRect(barrierX - 8, order.y + 25, 16, 45);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 11px system-ui';
+    ctx.fillText('🛡️ CHẮN', barrierX, order.y + 48);
+    ctx.restore();
+
+    let action = '', desc = '', code = '', resilience = '', statusColor = '#c084fc';
+
+    // Simulate 10 particles
+    for (let i = 0; i < packetCount; i++) {
+      const isAccepted = i < 3; // First 3 accepted
+      const startX = gw.x - 50 + (i % 3) * 20;
+      const startY = gw.y - 40 + i * 9;
+
+      let px, py, pColor;
+
+      if (t < 2000) {
+        // All flying towards Order
+        const p = t / 2000;
+        px = startX + p * (barrierX - startX);
+        py = startY + (order.y - startY) * p * 0.4;
+        pColor = '#818cf8';
+      } else if (isAccepted) {
+        // 3 accepted packets proceed smoothly into slots and to User
+        const p = (t - 2000) / 4000;
+        const targetSlotY = order.y - 30 + i * 30;
+        px = barrierX + p * (user.x - barrierX);
+        py = targetSlotY;
+        pColor = '#10b981';
+      } else {
+        // 7 rejected packets bounce back off barrier with elastic rebound!
+        const bounceP = (t - 2000) / 2500;
+        const bounceDist = Math.sin(Math.min(bounceP * Math.PI, Math.PI)) * 140;
+        px = barrierX - bounceDist;
+        py = startY + Math.sin(i * 1.5) * 25;
+        pColor = '#ef4444';
+      }
+
+      drawPacket(ctx, px, py, pColor, isAccepted ? `OK #${i + 1}` : '429', 7, false);
+    }
+
+    if (t < 2000) {
+      action = '10 Request ập đến cùng lúc';
+      desc = 'Bão lưu lượng 10 request đồng thời đổ vào Order Service.';
+      resilience = 'Nếu không có vách ngăn Bulkhead, 10 request này sẽ chiếm trọn connection pool!';
+      code = '10 REQUESTS';
+    } else if (t < 4500) {
+      action = 'Bulkhead cấp 3 slot · Từ chối 7 lượt (429)';
+      desc = 'Chỉ có 3 request lọt vào 3 slot xử lý. 7 request còn lại va vào vách ngăn Bulkhead và bị nảy ngược ra ngoài với HTTP 429 chỉ trong 1ms!';
+      resilience = 'Không để request rác ngâm lâu trong RAM hoặc Thread Pool; bảo vệ an toàn cho các API khác.';
+      code = '3x 200 OK · 7x 429';
+      statusColor = '#ef4444';
+    } else {
+      action = '3 Request hợp lệ hoàn tất an toàn';
+      desc = '3 request được cấp phép hoàn tất xử lý sau 2 giây và trả về 200 OK.';
+      resilience = 'Hệ thống vận hành vững như bàn thạch ngay cả trong tâm bão lưu lượng.';
+      code = 'HOÀN THÀNH';
+      statusColor = '#10b981';
+    }
+
+    return { phase: 'Topic 3 · Resilience4j Bulkhead', action, desc, resilience, statusColor, code };
+  }
+
+  // --- 5. CIRCUIT BREAKER SCENARIO (Physical lever switch & Fail-Fast 14ms bounce) ---
+  function animateCircuitBreaker(ctx, t, gw, order, user) {
+    let px = gw.x, py = gw.y, color = '#6366f1', label = '', statusColor = '#6366f1', action = '', desc = '', code = '', resilience = '';
+
+    // Draw Breaker Switch inside Order
+    const switchX = order.x + 30;
+    const switchY = order.y;
+    const isLeverOpen = t > 2400 && t < 6500;
+    const isHalfOpen = t >= 6500 && t < 7500;
+
+    ctx.save();
+    ctx.translate(switchX, switchY);
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+
+    if (isLeverOpen) {
+      // Lever opened UP at 50 degrees (red spark)
+      ctx.strokeStyle = '#ef4444';
+      ctx.shadowColor = '#ef4444';
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.moveTo(-15, 0);
+      ctx.lineTo(15, -35); // lifted lever
+      ctx.stroke();
+
+      // Electrical arc sparks
+      ctx.fillStyle = '#fef08a';
+      ctx.font = '16px system-ui';
+      ctx.fillText('⚡', 12, -38);
+    } else if (isHalfOpen) {
+      // Lever half open (yellow)
+      ctx.strokeStyle = '#f59e0b';
+      ctx.beginPath();
+      ctx.moveTo(-15, 0);
+      ctx.lineTo(15, -16);
+      ctx.stroke();
+    } else {
+      // Lever closed (green solid)
+      ctx.strokeStyle = '#10b981';
+      ctx.beginPath();
+      ctx.moveTo(-15, 0);
+      ctx.lineTo(15, 0);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    if (t < 2400) {
+      // Phase 1: Requests passing through, but User failing 100%
+      const p = (t % 1200) / 1200;
+      px = order.x + p * (user.x - order.x);
+      py = order.y;
+      color = '#ef4444';
+      label = 'User lỗi 500';
+      action = 'User Service sập liên tục 100%';
+      desc = 'Các request gửi sang User Service đều nhận về lỗi HTTP 500. Tỷ lệ lỗi trong cửa sổ trượt vượt quá 50%.';
+      resilience = 'Circuit Breaker phát hiện downstream đã chết, chuẩn bị cơ chế ngắt cầu dao khẩn cấp.';
+      code = 'FAILURE > 50%';
+      statusColor = '#ef4444';
+    } else if (t < 4000) {
+      // Phase 2: Breaker snaps OPEN!
+      px = switchX;
+      py = switchY;
+      color = '#ef4444';
+      label = 'CẦU DAO BUNG OPEN 🔴';
+      action = 'CẦU DAO BẬT MỞ (OPEN) — Cắt đứt mạch';
+      desc = 'Cầu dao an toàn lập tức bung mở! Mọi kết nối tới User Service bị ngắt đứt hoàn toàn.';
+      resilience = 'Từ thời điểm này, KHÔNG CÓ BẤT KỲ REQUEST NÀO được phép gọi sang User Service nữa!';
+      code = 'CIRCUIT: OPEN';
+      statusColor = '#ef4444';
+    } else if (t < 6500) {
+      // Phase 3: Fail-Fast 14ms Bounce!
+      // Packet arrives at switch, bounces right off back to Client!
+      const p = (t - 4000) / 2500;
+      if (p < 0.4) {
+        // Fast arrival
+        px = gw.x + (p / 0.4) * (switchX - gw.x);
+      } else {
+        // Bounces back immediately!
+        const bounceBack = (p - 0.4) / 0.6;
+        px = switchX - bounceBack * (switchX - gw.x);
+      }
+      py = order.y;
+      color = '#ef4444';
+      label = '503 FAIL-FAST (14ms)';
+      action = 'Fail-Fast: Nảy ngược trong 14ms (0 lượt gọi User)';
+      desc = 'Request mới vừa chạm vào Order Service lập tức va phải cầu dao đang OPEN và bị dội ngược ra ngay trong 14ms!';
+      resilience = 'Bảo vệ sinh tồn: Cứu Order Service; Cho User Service thời gian thở để tự phục hồi; Chống sập dây chuyền (Cascading Failure).';
+      code = 'HTTP 503 FAIL-FAST';
+      statusColor = '#ef4444';
+    } else if (t < 7500) {
+      // Phase 4: HALF-OPEN probe trial
+      const p = (t - 6500) / 1000;
+      px = switchX + p * (user.x - switchX);
+      py = order.y;
+      color = '#f59e0b';
+      label = 'Thăm dò (Probe)';
+      action = 'Chuyển sang HALF-OPEN — Cho 1 lượt thăm dò';
+      desc = 'Sau thời gian chờ, cầu dao hé mở cho đúng 1 request thăm dò đi qua để kiểm tra sức khỏe User Service.';
+      resilience = 'Cơ chế tự kiểm tra phục hồi thông minh.';
+      code = 'HALF_OPEN 🟡';
+      statusColor = '#f59e0b';
+    } else {
+      // Phase 5: Probe success, Breaker snaps CLOSED!
+      const p = (t - 7500) / 500;
+      px = user.x - p * (user.x - gw.x);
+      py = order.y;
+      color = '#10b981';
+      label = '200 OK (CLOSED)';
+      action = 'Thăm dò thành công — Đóng cầu dao CLOSED 🟢';
+      desc = 'Lượt thăm dò thành công 200 OK! Cầu dao đóng sập lại hoàn toàn (CLOSED), hệ thống tự chữa lành trọn vẹn!';
+      resilience = 'Khép kín vòng đời kiên cường tự động.';
+      code = 'CIRCUIT: CLOSED';
+      statusColor = '#10b981';
+    }
+
+    drawPacket(ctx, px, py, color, label, 11);
+    return { phase: 'Topic 4 · Resilience4j Circuit Breaker', action, desc, resilience, statusColor, code };
+  }
+
+  // --- 6. CONVERGE 4-IN-1 PIPELINE (5 Phases) ---
+  function animateConverge(ctx, t, gw, order, user) {
+    const phaseIndex = Math.floor(t / 2400); // 5 phases across 12000ms
+    const pT = t % 2400;
+    const progress = pT / 2400;
+
+    let px = gw.x, py = order.y, color = '#6366f1', label = '', action = '', desc = '', resilience = '', code = '', statusColor = '#6366f1';
+
+    if (phaseIndex === 0) {
+      // Phase 1: Bulkhead
+      px = gw.x + progress * (order.x - gw.x);
+      color = '#c084fc';
+      label = 'Pha 1 · Bulkhead (6 lượt)';
+      action = 'Pha 1/5: Bulkhead tiếp nhận 6 lượt tải';
+      desc = 'Gửi 6 request song song. Bulkhead cấp 3 slot chạy (200 OK) và từ chối ngay 3 lượt quá tải bằng HTTP 429.';
+      resilience = 'Tầng Bulkhead lọc sạch bão tải bảo vệ Order Service.';
+      code = 'PHA 1: BULKHEAD';
+      statusColor = '#c084fc';
+    } else if (phaseIndex === 1) {
+      // Phase 2: Retry
+      px = order.x + progress * (user.x - order.x);
+      color = '#38bdf8';
+      label = 'Pha 2 · Retry tự cứu';
+      action = 'Pha 2/5: Retry tự thử lại 3 lần';
+      desc = 'User Service lỗi 2 lần đầu (500). Tầng Retry tự động thử lại lần 3 và lấy được dữ liệu thành công.';
+      resilience = 'Tầng Retry ngoài cùng tự xóa bỏ tác động của lỗi chập chờn.';
+      code = 'PHA 2: RETRY 200';
+      statusColor = '#38bdf8';
+    } else if (phaseIndex === 2) {
+      // Phase 3: Feign Timeout + CB Open
+      px = order.x + Math.min(progress * 1.5, 0.8) * (user.x - order.x);
+      color = '#ef4444';
+      label = 'Pha 3 · Feign cắt sau 1s';
+      action = 'Pha 3/5: User Service treo 3s — Feign cắt đứt!';
+      desc = 'User Service bị treo 3s. Feign Timeout cắt đứt chính xác sau 1000ms. Lỗi này kích hoạt Circuit Breaker BUNG OPEN!';
+      resilience = 'Feign Timeout chuyển giao tín hiệu nguy cấp cho Circuit Breaker.';
+      code = 'PHA 3: TIMEOUT 504';
+      statusColor = '#ef4444';
+    } else if (phaseIndex === 3) {
+      // Phase 4: Circuit Breaker OPEN Fail-Fast
+      // Bounces back at Order in 14ms!
+      const bounce = progress < 0.5 ? progress * 2 : 2 - progress * 2;
+      px = gw.x + bounce * (order.x - gw.x);
+      color = '#ef4444';
+      label = 'Pha 4 · Fail-Fast 14ms (503)';
+      action = 'Pha 4/5: Circuit Breaker OPEN — Từ chối 503 ngay ở cửa!';
+      desc = 'Mạch đang OPEN. Request mới tới bị dội ngược ngay trong 14ms (HTTP 503). Retry tuyệt đối không gọi lại để chống bão Retry Storm!';
+      resilience = 'Sự phối hợp hoàn hảo: CB bảo vệ downstream, dập tắt bão Retry.';
+      code = 'PHA 4: FAIL-FAST';
+      statusColor = '#ef4444';
+    } else {
+      // Phase 5: Self Healing
+      px = user.x - (1 - progress) * (user.x - gw.x);
+      color = '#10b981';
+      label = 'Pha 5 · Tự chữa lành (200 OK)';
+      action = 'Pha 5/5: User Service phục hồi — Thăm dò & Khép mạch CLOSED 🟢';
+      desc = 'User Service được sửa. Sau 3s mạch chuyển HALF_OPEN, gửi 1 request thăm dò thành công 200 OK và đóng mạch về CLOSED!';
+      resilience = 'Khép lại trọn vẹn 100% vòng đời kiên cường của hệ thống Microservices.';
+      code = 'PHA 5: 200 OK';
+      statusColor = '#10b981';
+    }
+
+    drawPacket(ctx, px, py, color, label, 11);
+    return { phase: 'Hội tụ 4 Topic (5 Pha)', action, desc, resilience, statusColor, code };
+  }
+
+  // --- 7. FALLBACK SCENARIO ---
+  function animateFallback(ctx, t, gw, order, user) {
+    const isReturning = t > 2500;
+    let px, py, color, label;
+    if (!isReturning) {
+      const p = t / 2500;
+      px = gw.x + p * (order.x - gw.x);
+      py = order.y;
+      color = '#ef4444';
+      label = 'Downstream sập';
+    } else {
+      const p = (t - 2500) / 2500;
+      px = order.x - p * (order.x - gw.x);
+      py = order.y;
+      color = '#10b981';
+      label = 'Fallback: Khách dự phòng';
+    }
+    drawPacket(ctx, px, py, color, label, 11);
+    return {
+      phase: 'Mở rộng · Fallback',
+      action: isReturning ? 'Fallback trả đối tượng dự phòng an toàn' : 'User Service bị sập nguồn',
+      desc: isReturning ? 'Hàm Fallback tự động can thiệp, đóng gói dữ liệu "Khách hàng dự phòng" trả về HTTP 200 OK mượt mà.' : 'User Service không phản hồi.',
+      resilience: 'Bảo toàn trải nghiệm mua sắm không bị đứt đoạn.',
+      statusColor: isReturning ? '#10b981' : '#ef4444',
+      code: isReturning ? '200 OK (FALLBACK)' : 'DOWNSTREAM DOWN'
+    };
+  }
+
+  function handleReplay() {
+    animTimeRef.current = 0;
+    setIsPlaying(true);
+  }
 
   return (
     <div className="flow-visualizer-container">
@@ -403,212 +895,47 @@ export default function FlowVisualizer({ scenarioId, busy, liveStage, breakerSta
       <div className="visualizer-header">
         <div className="visualizer-title">
           <Activity size={17} className="pulse-icon" />
-          <span>MINH HỌA ĐỘNG ĐƯỜNG ĐI REQUEST & CƠ CHẾ PHÒNG THỦ</span>
+          <span>MÔ PHỎNG CHUYỂN ĐỘNG LIÊN TỤC 60 FPS (FLUID REQUEST MOTION)</span>
         </div>
         <div className="visualizer-controls">
-          <span className="step-counter">Bước {currentStepIdx + 1} / {steps.length}</span>
-          <button className="vis-btn" onClick={prevStep} disabled={currentStepIdx === 0} title="Bước trước">
-            ❮
-          </button>
-          <button className={`vis-btn play-btn ${isPlaying ? 'active' : ''}`} onClick={togglePlay} title={isPlaying ? 'Tạm dừng' : 'Tự động phát hoạt họa'}>
+          <span className="live-badge" style={{ color: currentNarrative.statusColor, borderColor: currentNarrative.statusColor }}>
+            ● {currentNarrative.code}
+          </span>
+          <button
+            className={`vis-btn play-btn ${isPlaying ? 'active' : ''}`}
+            onClick={() => setIsPlaying(!isPlaying)}
+            title={isPlaying ? 'Tạm dừng chuyển động' : 'Tiếp tục phát'}
+          >
             {isPlaying ? <Pause size={14} /> : <Play size={14} />}
-            <span>{isPlaying ? 'Tạm dừng' : 'Phát hoạt họa'}</span>
+            <span>{isPlaying ? 'Tạm dừng' : 'Phát chuyển động'}</span>
           </button>
-          <button className="vis-btn" onClick={nextStep} disabled={currentStepIdx === steps.length - 1} title="Bước tiếp theo">
-            ❯
-          </button>
-          <button className="vis-btn" onClick={resetFlow} title="Xem lại từ đầu">
+          <button className="vis-btn" onClick={handleReplay} title="Chạy lại từ đầu">
             <RotateCcw size={14} />
+            <span>Phát lại</span>
           </button>
         </div>
       </div>
 
-      {/* SVG Pipeline Animation Stage */}
-      <div className="pipeline-stage">
-        <svg className="pipeline-svg" viewBox="0 0 900 200" preserveAspectRatio="xMidYMid meet">
-          <defs>
-            <linearGradient id="pipeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stopColor="#4f46e5" stopOpacity="0.4" />
-              <stop offset="50%" stopColor="#6366f1" stopOpacity="0.9" />
-              <stop offset="100%" stopColor="#a855f7" stopOpacity="0.4" />
-            </linearGradient>
-            <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-              <feGaussianBlur stdDeviation="4" result="blur" />
-              <feComposite in="SourceGraphic" in2="blur" operator="over" />
-            </filter>
-          </defs>
-
-          {/* Connection Pipe 1: Client -> Order */}
-          <line x1="150" y1="100" x2="380" y2="100" stroke="#332d66" strokeWidth="6" strokeLinecap="round" />
-          <line x1="150" y1="100" x2="380" y2="100" stroke="url(#pipeGrad)" strokeWidth="3" strokeDasharray="6,6" className="animated-flow-line" />
-
-          {/* Connection Pipe 2: Order -> User */}
-          <line
-            x1="520" y1="100" x2="750" y2="100"
-            stroke={connectionCut ? '#ef4444' : connectionBlocked ? '#4b5563' : '#332d66'}
-            strokeWidth="6"
-            strokeLinecap="round"
-          />
-          {!connectionBlocked && !connectionCut && (
-            <line x1="520" y1="100" x2="750" y2="100" stroke="url(#pipeGrad)" strokeWidth="3" strokeDasharray="6,6" className="animated-flow-line" />
-          )}
-
-          {/* Cut Scissors Indicator */}
-          {connectionCut && (
-            <g transform="translate(625, 80)">
-              <circle cx="10" cy="20" r="18" fill="#ef4444" />
-              <text x="10" y="25" textAnchor="middle" fill="#fff" fontSize="16" fontWeight="bold">✂️</text>
-              <text x="10" y="-8" textAnchor="middle" fill="#ef4444" fontSize="11" fontWeight="bold">NGẮT TIMEOUT (1s)</text>
-            </g>
-          )}
-
-          {/* Blocked Wall Indicator */}
-          {connectionBlocked && (
-            <g transform="translate(625, 75)">
-              <rect x="-8" y="0" width="36" height="50" rx="8" fill="#ef4444" opacity="0.9" />
-              <text x="10" y="30" textAnchor="middle" fill="#fff" fontSize="20" fontWeight="bold">⛔</text>
-              <text x="10" y="-8" textAnchor="middle" fill="#ef4444" fontSize="11" fontWeight="bold">CHẶN FAIL-FAST (0 LƯỢT)</text>
-            </g>
-          )}
-
-          {/* Animated Request Packet */}
-          {packetVisible && (
-            <g transform={`translate(${packetX * 9}, ${packetY * 2})`} filter="url(#glow)">
-              <circle cx="0" cy="0" r="13" fill={step.color} className="pulsing-packet" />
-              <circle cx="0" cy="0" r="6" fill="#ffffff" />
-              <text x="0" y="-20" textAnchor="middle" fill={step.color} fontSize="11" fontWeight="bold">
-                {step.code}
-              </text>
-            </g>
-          )}
-
-          {/* Node 1: Client / Gateway */}
-          <g transform="translate(50, 45)">
-            <rect x="0" y="0" width="120" height="110" rx="14" fill="#1e1b4b" stroke="#4338ca" strokeWidth="2" />
-            <circle cx="60" cy="35" r="20" fill="#312e81" />
-            <text x="60" y="42" textAnchor="middle" fill="#818cf8" fontSize="18">🌐</text>
-            <text x="60" y="75" textAnchor="middle" fill="#ffffff" fontSize="13" fontWeight="bold">API Gateway</text>
-            <text x="60" y="93" textAnchor="middle" fill="#94a3b8" fontSize="10">:8080 · Client</text>
-          </g>
-
-          {/* Node 2: Order Service (Resilience Guards) */}
-          <g transform="translate(360, 25)">
-            <rect
-              x="0" y="0" width="180" height="150" rx="16"
-              fill="#18182b"
-              stroke={isCircuitOpen ? '#ef4444' : '#6366f1'}
-              strokeWidth="2.5"
-            />
-            <rect x="10" y="10" width="160" height="28" rx="8" fill="#242145" />
-            <text x="90" y="28" textAnchor="middle" fill="#e0e7ff" fontSize="12" fontWeight="bold">
-              📦 Order Service (:8082)
-            </text>
-
-            {/* Active Guard badge inside Order */}
-            <g transform="translate(20, 52)">
-              <rect x="0" y="0" width="140" height="78" rx="10" fill="#131126" stroke="#3730a3" strokeWidth="1.2" />
-              {scenarioId === 'timeout' && (
-                <>
-                  <text x="70" y="24" textAnchor="middle" fill="#f59e0b" fontSize="11" fontWeight="bold">⏱️ Feign Timeout</text>
-                  <text x="70" y="45" textAnchor="middle" fill="#94a3b8" fontSize="10">readTimeout: 1000ms</text>
-                  <text x="70" y="65" textAnchor="middle" fill="#ef4444" fontSize="10" fontWeight="bold">Cắt đứt khi quá 1s</text>
-                </>
-              )}
-              {scenarioId === 'retry' && (
-                <>
-                  <text x="70" y="24" textAnchor="middle" fill="#38bdf8" fontSize="11" fontWeight="bold">🔄 Resilience4j Retry</text>
-                  <text x="70" y="45" textAnchor="middle" fill="#94a3b8" fontSize="10">Max 3 lần · Backoff</text>
-                  <text x="70" y="65" textAnchor="middle" fill="#22c55e" fontSize="10" fontWeight="bold">Tự cứu ở lần 3</text>
-                </>
-              )}
-              {scenarioId === 'bulkhead' && (
-                <>
-                  <text x="70" y="24" textAnchor="middle" fill="#a855f7" fontSize="11" fontWeight="bold">🛡️ Bulkhead Semaphore</text>
-                  <text x="70" y="45" textAnchor="middle" fill="#94a3b8" fontSize="10">3 Slot chạy / 10 đến</text>
-                  <text x="70" y="65" textAnchor="middle" fill="#f59e0b" fontSize="10" fontWeight="bold">7 request dội lại 429</text>
-                </>
-              )}
-              {scenarioId === 'breaker' && (
-                <>
-                  <text x="70" y="24" textAnchor="middle" fill="#ec4899" fontSize="11" fontWeight="bold">⚡ Circuit Breaker</text>
-                  <text x="70" y="45" textAnchor="middle" fill={isCircuitOpen ? '#ef4444' : '#22c55e'} fontSize="11" fontWeight="bold">
-                    Trạng thái: {isCircuitOpen ? 'OPEN 🔴' : 'CLOSED 🟢'}
-                  </text>
-                  <text x="70" y="65" textAnchor="middle" fill="#94a3b8" fontSize="10">
-                    {isCircuitOpen ? 'Fail-Fast 14ms (503)' : 'Cho phép lưu thông'}
-                  </text>
-                </>
-              )}
-              {scenarioId === 'converge' && (
-                <>
-                  <text x="70" y="20" textAnchor="middle" fill="#818cf8" fontSize="10" fontWeight="bold">4 Tầng lồng nhau</text>
-                  <text x="70" y="38" textAnchor="middle" fill="#94a3b8" fontSize="9">1.Retry ➔ 2.CB</text>
-                  <text x="70" y="54" textAnchor="middle" fill="#94a3b8" fontSize="9">3.Bulkhead ➔ 4.Feign</text>
-                  <text x="70" y="70" textAnchor="middle" fill="#22c55e" fontSize="9" fontWeight="bold">5 Pha bảo vệ khép kín</text>
-                </>
-              )}
-              {scenarioId === 'normal' && (
-                <>
-                  <text x="70" y="28" textAnchor="middle" fill="#22c55e" fontSize="11" fontWeight="bold">✅ OpenFeign Chuẩn</text>
-                  <text x="70" y="52" textAnchor="middle" fill="#94a3b8" fontSize="10">Chuyển tiếp trơn tru</text>
-                </>
-              )}
-              {scenarioId === 'fallback' && (
-                <>
-                  <text x="70" y="24" textAnchor="middle" fill="#22c55e" fontSize="11" fontWeight="bold">🛡️ Fallback Mode</text>
-                  <text x="70" y="45" textAnchor="middle" fill="#94a3b8" fontSize="10">Bảo hiểm lỗi</text>
-                  <text x="70" y="65" textAnchor="middle" fill="#38bdf8" fontSize="10">Trả dữ liệu dự phòng</text>
-                </>
-              )}
-            </g>
-          </g>
-
-          {/* Node 3: User Service */}
-          <g transform="translate(730, 45)">
-            <rect
-              x="0" y="0" width="130" height="110" rx="14"
-              fill="#1e182e"
-              stroke={scenarioId === 'normal' ? '#22c55e' : '#e11d48'}
-              strokeWidth="2"
-            />
-            <circle cx="65" cy="35" r="20" fill="#2e1a32" />
-            <text x="65" y="42" textAnchor="middle" fill="#f43f5e" fontSize="18">👤</text>
-            <text x="65" y="75" textAnchor="middle" fill="#ffffff" fontSize="13" fontWeight="bold">User Service</text>
-            <text x="65" y="93" textAnchor="middle" fill="#94a3b8" fontSize="10">
-              {scenarioId === 'normal' ? 'Bình thường (:8081)' : 'Giả lập sự cố (:8081)'}
-            </text>
-          </g>
-        </svg>
+      {/* Fluid Canvas Stage */}
+      <div className="canvas-wrapper">
+        <canvas ref={canvasRef} className="flow-canvas" />
       </div>
 
-      {/* Step Explanation Banner */}
+      {/* Live Continuous Narration Card */}
       <div className="flow-explanation-card">
         <div className="step-badge-row">
-          <span className="step-pill" style={{ backgroundColor: step.color + '25', color: step.color, borderColor: step.color }}>
-            {step.badge}
+          <span className="step-pill" style={{ backgroundColor: currentNarrative.statusColor + '25', color: currentNarrative.statusColor, borderColor: currentNarrative.statusColor }}>
+            {currentNarrative.phase}
           </span>
           <span className="step-action-tag">
-            <ArrowRight size={13} /> {step.action}
+            <ArrowRight size={13} /> {currentNarrative.action}
           </span>
         </div>
-        <h4 className="step-title">{step.title}</h4>
-        <p className="step-desc">{step.desc}</p>
-        <div className="step-resilience-box">
-          <strong>Ý nghĩa kiên cường:</strong> {step.resilienceEffect}
-        </div>
-
-        {/* Step Indicator dots */}
-        <div className="step-dots">
-          {steps.map((st, i) => (
-            <button
-              key={st.title}
-              className={`step-dot ${i === currentStepIdx ? 'active' : ''}`}
-              onClick={() => { setIsPlaying(false); setCurrentStepIdx(i); }}
-              title={`Nhảy tới bước ${i + 1}: ${st.title}`}
-            >
-              {i + 1}
-            </button>
-          ))}
+        <p className="step-desc" style={{ fontSize: '0.92rem', color: '#f1f5f9', fontWeight: 600 }}>
+          {currentNarrative.desc}
+        </p>
+        <div className="step-resilience-box" style={{ borderLeftColor: currentNarrative.statusColor }}>
+          <strong>Bản chất kiên cường:</strong> {currentNarrative.resilience}
         </div>
       </div>
     </div>
