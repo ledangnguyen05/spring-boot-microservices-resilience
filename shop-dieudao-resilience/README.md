@@ -12,6 +12,7 @@ Dự án đã được phân chia thành **2 thư mục tách biệt hoàn toàn
 - **`backend/` (BE)**: Hệ thống 3 Spring Boot Microservices (`api-gateway`, `order-service`, `user-service`).
 - **`frontend/` (FE)**: Ứng dụng React Dashboard hiện đại (Vite + Lucide Icons) hỗ trợ kiểm thử trực quan thời gian thực.
 - **`TESTING_GUIDE.md`**: Cẩm nang hướng dẫn kiểm thử chi tiết từ giao diện Web đến cURL và unit test.
+- **`LY_THUYET_VA_THUAT_NGU.md`**: Giải thích sâu nguyên lý, thuật ngữ chuyên môn và các ví dụ thực tế đời sống của 4 topic.
 - **`DEMO_RESILIENCE.md`**: Chi tiết lý thuyết, bảng so sánh và các bước thực hành từng bước.
 
 ---
@@ -155,6 +156,7 @@ cd backend
   - `testRetryRetriesOnException`: Retry tự thử lại đúng 3 lần với exponential backoff.
   - `testClientErrorIgnoredByRetryAndCircuitBreaker`: Lỗi 4xx (Client Error) không bị retry oan và không làm tăng failure rate của CB.
   - `testCircuitBreakerOpenPreventsRetryStorm`: Khi CB đang `OPEN`, Retry không gọi lại vô ích (chống Retry Storm).
+  - `testConvergedPipelineRetryStopsWhenCircuitOpens`: Kiểm thử chuỗi phối hợp cả 4 topic: Retry lập tức ngừng gọi lại khi Circuit Breaker đã bật sang trạng thái `OPEN`.
 - `UserServiceApplicationTests` & `ChaosStateTest`: Mô phỏng và kiểm soát tỷ lệ lỗi runtime chính xác.
 - `ApiGatewayApplicationTests`: Gateway routing & CORS WebFilter hoạt động chính xác.
 

@@ -59,7 +59,36 @@ function CallDetails({ rows, retry }) {
   </div>;
 }
 
+function ConvergeTable({ result }) {
+  return <div className="table-frame" tabIndex={0} role="region" aria-label="Bảng kịch bản hội tụ 4 topic">
+    <table className="result-table">
+      <caption>Kịch bản hội tụ · {result.length}/4 pha</caption>
+      <thead><tr>
+        <th scope="col">Pha</th><th scope="col">Cơ chế ra tay</th><th scope="col">HTTP</th>
+        <th scope="col">Kết quả</th><th scope="col">Thời gian</th><th scope="col">Số lần gọi User</th>
+      </tr></thead>
+      <tbody>{result.map(({ body, status, measuredMs, phase }, index) => {
+        const burst = body?.summary;
+        const outcome = burst
+          ? Object.entries(burst).map(([key, count]) => `${count}× ${outcomeLabels[key] ?? key}`).join(' · ')
+          : (outcomeLabels[body?.outcome] ?? body?.outcome);
+        const calls = burst ? (body.requestResults ?? []).reduce((sum, item) => sum + (item.attempts ?? 0), 0) : body?.attempts;
+        return <tr key={index}>
+          <th scope="row">{phase.title}</th>
+          <td>{phase.topics}<small>{phase.expect}</small></td>
+          <td><span className={`http-code ${status < 400 ? 'http-ok' : 'http-error'}`}>{status}</span></td>
+          <td>{outcome}</td>
+          <td className="numeric">{milliseconds(measuredMs)}</td>
+          <td className="numeric">{calls ?? '—'}</td>
+        </tr>;
+      })}</tbody>
+    </table>
+  </div>;
+}
+
 function ResultTable({ scenario, result }) {
+  if (scenario === 'converge') return <ConvergeTable result={result} />;
+
   if (scenario === 'normal') {
     const { body, status } = result;
     const rows = [
@@ -174,6 +203,20 @@ function summarize(scenario, result, breaker) {
     return breaker ? `${summary} Trạng thái hiện tại là ${breaker}.` : summary;
   }
 
+  if (scenario === 'converge') {
+    if (result.length < 4) return 'Kịch bản đang chạy. Cần đủ 4 pha để kết luận.';
+    const [bulk, retry, hang, open] = result;
+    const counts = bulk.body.summary ?? {};
+    const retryText = retry.body.outcome === 'OK'
+      ? `Retry cứu được yêu cầu ở lần gọi thứ ${retry.body.attempts}`
+      : `Retry không cứu được yêu cầu (${outcomeLabels[retry.body.outcome] ?? retry.body.outcome})`;
+    const hangText = `${outcomeLabels[hang.body.outcome] ?? hang.body.outcome} sau ${hang.body.attempts} lần gọi thật`;
+    const openText = open.body.outcome === 'CIRCUIT_OPEN'
+      ? `mạch từ chối ngay (${open.body.attempts} lần gọi User)`
+      : `kết quả ${outcomeLabels[open.body.outcome] ?? open.body.outcome}`;
+    return `Pha 1: ${counts.OK ?? 0} lượt thành công, ${counts.BULKHEAD_FULL ?? 0} lượt bị Bulkhead từ chối. Pha 2: ${retryText}. Pha 3: ${hangText}. Pha 4: ${openText}.${breaker ? ` Trạng thái mạch hiện tại là ${breaker}.` : ''}`;
+  }
+
   const [off, on] = result;
   if (!on) return 'Đã nhận phản hồi khi tắt dự phòng. Cần thêm kết quả khi bật để so sánh.';
   if (off.status >= 400 && on.body.outcome === 'FALLBACK' && on.body.user) {
@@ -220,6 +263,14 @@ function describeProcess(scenario, result, breaker) {
       }
       return steps;
     }
+    case 'converge':
+      if (result.length < 4) return [];
+      return [
+        'Pha 1 (Bulkhead): 6 lượt đến cùng lúc nhưng chỉ có 3 suất. Lượt dư bị từ chối ngay, không được thử lại và không bị tính là lỗi của User Service.',
+        'Pha 2 (Retry): hai lần gọi đầu nhận HTTP 500. Retry chờ 500 ms rồi 1.000 ms, lần thứ ba thành công nên người dùng không thấy lỗi.',
+        'Pha 3 (Feign timeout → Circuit Breaker → Retry): User Service treo 3 giây nhưng Feign cắt mỗi lần gọi sau 1 giây. Lỗi này làm tỷ lệ lỗi của mạch vượt ngưỡng nên mạch mở; Retry gặp mạch mở thì dừng thay vì gọi tiếp.',
+        'Pha 4 (Circuit Breaker): mạch đang mở nên yêu cầu bị từ chối ngay tại Order Service, 0 lần gọi sang User Service, không chờ timeout và không retry.',
+      ];
     case 'fallback':
       if (result[0]?.status < 400 || result[1]?.body.outcome !== 'FALLBACK') return [];
       return [
@@ -242,7 +293,7 @@ export default function DemoResults({ scenario, result, breaker, busy, error, vi
         <button type="button" aria-pressed={view === 'table'} onClick={() => onViewChange('table')}><Table2 size={15} /> Bảng</button>
         <button type="button" aria-pressed={view === 'json'} onClick={() => onViewChange('json')}><FileJson size={15} /> JSON</button>
       </div>
-      {scenario === 'breaker' && breaker && <span className="breaker-state">Mạch hiện tại <strong>{breaker}</strong></span>}
+      {(scenario === 'breaker' || scenario === 'converge') && breaker && <span className="breaker-state">Mạch hiện tại <strong>{breaker}</strong></span>}
     </div>
     {view === 'table'
       ? <ResultTable scenario={scenario} result={result} />

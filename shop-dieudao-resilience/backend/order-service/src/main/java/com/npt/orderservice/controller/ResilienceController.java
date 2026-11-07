@@ -72,6 +72,13 @@ public class ResilienceController {
         return reply(service.circuitBreaker(userId));
     }
 
+    @Operation(summary = "Demo 6: HỘI TỤ 4 topic (Feign timeout + Bulkhead + Circuit Breaker + Retry)",
+            description = "Thứ tự lồng: Retry (ngoài) -> CircuitBreaker -> Bulkhead -> Feign readTimeout 1s (trong). Không có TimeLimiter hay Fallback. Dùng /burst/converge?n=6 để thấy Bulkhead.")
+    @GetMapping("/converge/{userId}")
+    public ResponseEntity<DemoResult> converge(@PathVariable Long userId) {
+        return reply(service.converge(userId));
+    }
+
     @Operation(summary = "Demo 5: Kết hợp cả 4 pattern + Fallback",
             description = "Thứ tự lồng: Retry (ngoài) -> CircuitBreaker -> TimeLimiter -> ThreadPoolBulkhead (trong). Có Fallback an toàn (hoặc truyền fallback=false để thấy mã lỗi thật).")
     @GetMapping("/combined/{userId}")

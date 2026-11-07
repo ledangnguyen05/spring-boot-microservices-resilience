@@ -158,5 +158,49 @@ class ResiliencePatternsTest {
         // Supplier bên trong không bao giờ được chạm vào và Retry không gọi lại
         assertEquals(0, supplierCalls.get(), "Khi CB đang OPEN, method không được gọi và Retry không thử lại");
     }
+
+    @Test
+    @DisplayName("Hội tụ 4 topic: lỗi timeout làm CB mở, Retry dừng ngay thay vì gọi tiếp")
+    void testConvergedPipelineRetryStopsWhenCircuitOpens() {
+        CircuitBreaker cb = kit.cbConverge();
+        Bulkhead bh = kit.bulkheadConverge();
+        Retry retry = kit.retryConverge();
+        cb.reset();
+
+        // Dựng cửa sổ CB (5 mẫu) giống kịch bản demo: 3 OK (pha Bulkhead) -> 2 lỗi + 1 OK (pha Retry)
+        // => cửa sổ gần nhất [OK, OK, LỖI, LỖI, OK] = 40% lỗi < 50% nên mạch vẫn CLOSED.
+        for (int i = 0; i < 3; i++) {
+            assertEquals("ok", Decorators.ofSupplier(() -> "ok").withCircuitBreaker(cb).get());
+        }
+        for (int i = 0; i < 2; i++) {
+            assertThrows(RuntimeException.class, () ->
+                    Decorators.ofSupplier((Supplier<String>) () -> {
+                        throw new RuntimeException("injected 500");
+                    }).withCircuitBreaker(cb).get());
+        }
+        assertEquals("ok", Decorators.ofSupplier(() -> "ok").withCircuitBreaker(cb).get());
+        assertEquals(CircuitBreaker.State.CLOSED, cb.getState(), "Trước pha timeout mạch phải còn CLOSED");
+
+        // Pha timeout: mỗi lần gọi bị cắt (giả lập bằng exception). Lỗi đầu tiên đẩy tỉ lệ lỗi lên 60% -> OPEN.
+        AtomicInteger realCalls = new AtomicInteger();
+        Supplier<String> timingOutCall = () -> {
+            realCalls.incrementAndGet();
+            throw new RuntimeException("Read timed out");
+        };
+        Supplier<String> pipeline = Decorators.ofSupplier(timingOutCall)
+                .withBulkhead(bh)             // trong cùng
+                .withCircuitBreaker(cb)
+                .withRetry(retry)             // ngoài cùng
+                .decorate();
+
+        // Lần 1 lỗi (retry được) -> mạch OPEN; lần 2 bị CB từ chối -> Retry không thử lần 3.
+        assertThrows(CallNotPermittedException.class, pipeline::get);
+        assertEquals(CircuitBreaker.State.OPEN, cb.getState(), "Mạch phải OPEN sau lần timeout thứ 1");
+        assertEquals(1, realCalls.get(), "Chỉ 1 lần gọi thật; các lần sau bị CB chặn, không gọi xuống dưới");
+
+        // Gọi lại ngay: fail-fast, không đụng tới lời gọi thật.
+        assertThrows(CallNotPermittedException.class, pipeline::get);
+        assertEquals(1, realCalls.get(), "Mạch OPEN thì không có thêm lời gọi thật nào");
+    }
 }
 

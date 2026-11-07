@@ -12,9 +12,12 @@ Tài liệu này tập trung 100% vào **Nguyên lý hoạt động (Ban đầu 
 
 ---
 
-## 2. Kiểm Thử Chi Tiết 5 Mẫu Chịu Lỗi (Resilience Patterns)
+## 2. Kiểm Thử Chi Tiết Các Mẫu Chịu Lỗi (Resilience Patterns)
 
 Luồng gọi: **React UI (`:3000`) ➔ API Gateway (`:8080`) ➔ Order Service (`:8082`) ➔ User Service (`:8081`)**
+
+> [!TIP]
+> Để hiểu sâu hơn về lý thuyết chi tiết, các thuật ngữ kỹ thuật và ví dụ so sánh, bạn có thể tham khảo thêm tài liệu: [LY_THUYET_VA_THUAT_NGU.md](LY_THUYET_VA_THUAT_NGU.md).
 
 ---
 
@@ -129,6 +132,28 @@ Luồng gọi: **React UI (`:3000`) ➔ API Gateway (`:8080`) ➔ Order Service 
 
 ---
 
+### MẪU 6: HỘI TỤ 4 TOPIC SEMINAR (Converge Pipeline 4-trong-1)
+
+Mục này trình diễn một chuỗi xử lý nghiệp vụ thực tế khi **cả 4 Topic trong đề tài seminar** cùng hội tụ để bảo vệ 1 giao dịch tạo đơn hàng:
+- **Thứ tự lồng nhau chuẩn xác:** `Client ➔ Retry (ngoài cùng) ➔ Circuit Breaker ➔ Bulkhead ➔ Feign Timeout (1000ms) ➔ User Service`.
+
+#### 1. Nguyên lý phối hợp 4 tầng
+1. **Tầng 1 (Bulkhead = 3 suất):** Ngăn chặn tình trạng hàng loạt request cùng ập tới làm cạn kiệt luồng. Chỉ cho phép tối đa 3 cuộc gọi đồng thời, request thứ 4 bị chặn ngay với mã `429 BULKHEAD_FULL`.
+2. **Tầng 2 (Feign Timeout = 1000ms):** Nếu User Service bị nghẽn (chậm 3s), Feign ngắt sau đúng 1000ms với mã `504 FEIGN_TIMEOUT`.
+3. **Tầng 3 (Circuit Breaker - Cửa sổ 5 lần, ngưỡng 50%):** Thu thập tỷ lệ thất bại. Khi lỗi vượt quá 50%, CB nhảy sang `OPEN`, chặn đứng toàn bộ các request sau đó trong `0ms` (`503 CIRCUIT_OPEN`).
+4. **Tầng 4 (Retry - Tối đa 3 lần):** Tự động thử lại khi gặp lỗi thoáng qua (mã 500). **Đặc biệt:** Khi Circuit Breaker nhảy sang `OPEN`, Retry lập tức dừng lại, không thử lại vô ích (chống `Retry Storm`).
+
+#### 2. Cách kiểm thử trên Giao diện Web
+1. Tại menu bên trái, chọn kịch bản **`Hội tụ 4 topic`**.
+2. Đọc bảng kiến thức và các thuật ngữ kèm ví dụ thực tế đời sống ngay trên giao diện.
+3. Bấm nút: **`▶ Chạy toàn bộ 4 Pha Hội tụ`**. Hệ thống sẽ tự động chạy 4 pha:
+   - **Pha 1 (Bulkhead):** Bắn 6 request đồng thời $\rightarrow$ Bulkhead cho 3 request qua, từ chối 3 request thừa (`429`).
+   - **Pha 2 (Retry):** Cấu hình lỗi 2 lần đầu $\rightarrow$ Retry tự động gọi 3 lần và thành công ở lần 3 (`200 OK`).
+   - **Pha 3 (Feign Timeout + CB):** Gây trễ 3s $\rightarrow$ Feign Timeout cắt sau 1s, đẩy tỷ lệ lỗi vượt 50% làm Circuit Breaker nhảy sang **`OPEN`**.
+   - **Pha 4 (Fail-Fast):** Gửi 1 request $\rightarrow$ Circuit Breaker chặn đứng ngay trong 0ms với mã `503 CIRCUIT_OPEN`, Retry không hề gọi sang User Service (`attempts = 0`).
+
+---
+
 ## 3. Bảng Tóm Tắt Đối Chiếu Nhanh
 
 | Pattern | Kích Hoạt Chaos | Hành Động | Ban Đầu (Không bảo vệ) | Sau Đó (Có Resilience) | Mã HTTP |
@@ -137,4 +162,5 @@ Luồng gọi: **React UI (`:3000`) ➔ API Gateway (`:8080`) ➔ Order Service 
 | **Retry** | Bấm `Lỗi 2 lần đầu` | Bấm `Test Retry` | Văng lỗi 500 ngay lần đầu tiên | Gọi 3 lần, tự hồi phục ở lần 3 trong suốt | **200 OK** |
 | **Bulkhead** | Nhập `delayMs=2000` | Bắn 10 Request song song | 10 request chiếm trọn tài nguyên hệ thống | 3 request phục vụ, 7 request bị từ chối trong 2ms | **429 Too Many Requests** |
 | **Circuit Breaker** | Bấm `Sập 100% 500` | Bắn 6 lần liên tiếp | Vẫn nã request làm downstream chết hẳn | Ngắt mạch sang `OPEN`, chặn đứng trong 0ms | **503 Service Unavailable** |
+| **Hội tụ 4 Topic** | Tự động theo 4 pha | Bấm `Chạy toàn bộ 4 Pha` | Sập dây chuyền, cạn luồng, Retry Storm | 4 lớp bảo vệ phối hợp nhịp nhàng, chống Retry Storm | **200 / 429 / 503 / 504** |
 | **Combined + Fallback** | Bấm `Sập 100% 500` | Tích Fallback & Bấm Test | Khách hàng nhận trang lỗi 500/503 | Trả về dữ liệu an toàn `Khách (dự phòng)` | **200 OK** |

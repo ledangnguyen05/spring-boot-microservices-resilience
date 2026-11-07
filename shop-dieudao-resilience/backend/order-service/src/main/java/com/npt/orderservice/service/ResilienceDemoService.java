@@ -47,10 +47,14 @@ public class ResilienceDemoService {
     }
 
     private final UserResilientClient userClient;
+    private final com.npt.orderservice.client.UserConvergeClient convergeClient;
     private final ResilienceKit kit;
 
-    public ResilienceDemoService(UserResilientClient userClient, ResilienceKit kit) {
+    public ResilienceDemoService(UserResilientClient userClient,
+                                 com.npt.orderservice.client.UserConvergeClient convergeClient,
+                                 ResilienceKit kit) {
         this.userClient = userClient;
+        this.convergeClient = convergeClient;
         this.kit = kit;
     }
 
@@ -183,6 +187,35 @@ public class ResilienceDemoService {
     }
 
     // =====================================================================
+    // DEMO 6: HỘI TỤ CẢ 4 TOPIC (Feign timeout + Bulkhead + Circuit Breaker + Retry)
+    //
+    //   request ──► RETRY ──► CIRCUIT BREAKER ──► BULKHEAD ──► Feign (readTimeout 1s) ──► user-service
+    //   (ngoài cùng)                                                        (trong cùng)
+    //
+    //   - Feign timeout : cắt MỖI lần gọi sau 1s -> biến "treo" thành lỗi rõ ràng (FeignException).
+    //   - Bulkhead      : tối đa 3 lời gọi đồng thời; dư thì BulkheadFullException (Retry KHÔNG thử lại).
+    //   - CircuitBreaker: ghi nhận mọi lần gọi (kể cả các lần retry); lỗi nhiều -> OPEN.
+    //   - Retry         : thử lại lỗi thoáng qua; KHÔNG thử lại khi CB đã OPEN.
+    // Không dùng TimeLimiter / fallback: để chỉ đúng 4 topic của seminar tham gia.
+    // Kịch bản chi tiết (4 pha) xem LY_THUYET_VA_THUAT_NGU.md, mục 6.
+    // =====================================================================
+    public DemoResult converge(Long userId) {
+        AtomicInteger attempts = new AtomicInteger();
+        return run("6-CONVERGE-4IN1", attempts, false, userId, () -> {
+            Supplier<UserResponseDTO> call = () -> {
+                int n = attempts.incrementAndGet();
+                log.info("[converge] gọi user-service lần #{} (thread={})", n, Thread.currentThread().getName());
+                return convergeClient.getUserById(userId);
+            };
+            return Decorators.ofSupplier(call)
+                    .withBulkhead(kit.bulkheadConverge())        // 1. trong cùng (ngay trên Feign timeout)
+                    .withCircuitBreaker(kit.cbConverge())        // 2.
+                    .withRetry(kit.retryConverge())              // 3. ngoài cùng
+                    .get();
+        });
+    }
+
+    // =====================================================================
     // Tiện ích
     // =====================================================================
 
@@ -190,6 +223,7 @@ public class ResilienceDemoService {
     public DemoResult dispatch(String pattern, Long userId) {
         return switch (pattern) {
             case "feign-timeout" -> feignTimeout(userId);
+            case "converge" -> converge(userId);
             case "timeout" -> timeout(userId);
             case "retry" -> retry(userId);
             case "bulkhead" -> bulkhead(userId);
@@ -197,7 +231,7 @@ public class ResilienceDemoService {
             case "combined" -> combined(userId, true);
             case "combined-nofallback" -> combined(userId, false);
             default -> throw new IllegalArgumentException(
-                    "pattern phải là: feign-timeout | timeout | retry | bulkhead | circuit-breaker | combined | combined-nofallback");
+                    "pattern phải là: feign-timeout | timeout | retry | bulkhead | circuit-breaker | converge | combined | combined-nofallback");
         };
     }
 
@@ -206,11 +240,17 @@ public class ResilienceDemoService {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("circuitBreaker_demo4", cb(kit.cbOnly()));
         m.put("circuitBreaker_combined", cb(kit.cbCombined()));
+        m.put("circuitBreaker_converge", cb(kit.cbConverge()));
 
         Map<String, Object> bh = new LinkedHashMap<>();
         bh.put("maxConcurrentCalls", kit.bulkheadOnly().getBulkheadConfig().getMaxConcurrentCalls());
         bh.put("availableConcurrentCalls", kit.bulkheadOnly().getMetrics().getAvailableConcurrentCalls());
         m.put("bulkhead_demo3", bh);
+
+        Map<String, Object> bhc = new LinkedHashMap<>();
+        bhc.put("maxConcurrentCalls", kit.bulkheadConverge().getBulkheadConfig().getMaxConcurrentCalls());
+        bhc.put("availableConcurrentCalls", kit.bulkheadConverge().getMetrics().getAvailableConcurrentCalls());
+        m.put("bulkhead_converge", bhc);
 
         Map<String, Object> tpb = new LinkedHashMap<>();
         tpb.put("threadPoolSize", kit.tpbCombined().getMetrics().getThreadPoolSize());
@@ -230,10 +270,11 @@ public class ResilienceDemoService {
         return m;
     }
 
-    /** Đưa cả 2 circuit breaker về CLOSED, xóa số liệu - để demo lại từ đầu. */
+    /** Đưa các circuit breaker về CLOSED, xóa số liệu - để demo lại từ đầu. */
     public Map<String, Object> reset() {
         kit.cbOnly().reset();
         kit.cbCombined().reset();
+        kit.cbConverge().reset();
         return status();
     }
 

@@ -66,6 +66,11 @@ public class ResilienceKit {
     private final CircuitBreaker cbCombined;
     private final Retry retryCombined;
 
+    // ---------- DEMO 6: HỘI TỤ 4 TOPIC (Retry > CircuitBreaker > Bulkhead > Feign timeout) ----------
+    private final Bulkhead bulkheadConverge;
+    private final CircuitBreaker cbConverge;
+    private final Retry retryConverge;
+
     public ResilienceKit(
             @Value("${demo.timeout.duration-ms:1500}") long timeoutMs,
             @Value("${demo.retry.max-attempts:3}") int maxAttempts,
@@ -132,6 +137,13 @@ public class ResilienceKit {
         logCircuitBreaker("combined-cb", cbCombined);
         this.retryCombined = Retry.of("combined-retry", retryConfig);
         logRetry("combined-retry", retryCombined);
+
+        // Kịch bản hội tụ: dùng CÙNG cấu hình với các demo đơn lẻ nhưng instance RIÊNG (trạng thái độc lập).
+        this.bulkheadConverge = Bulkhead.of("converge-bulkhead", bulkheadConfig);
+        this.cbConverge = CircuitBreaker.of("converge-cb", cbConfig);
+        logCircuitBreaker("converge-cb", cbConverge);
+        this.retryConverge = Retry.of("converge-retry", retryConfig);
+        logRetry("converge-retry", retryConverge);
     }
 
     // ================= Getter =================
@@ -145,6 +157,9 @@ public class ResilienceKit {
     public TimeLimiter tlCombined() { return tlCombined; }
     public CircuitBreaker cbCombined() { return cbCombined; }
     public Retry retryCombined() { return retryCombined; }
+    public Bulkhead bulkheadConverge() { return bulkheadConverge; }
+    public CircuitBreaker cbConverge() { return cbConverge; }
+    public Retry retryConverge() { return retryConverge; }
 
     // ================= Chính sách: lỗi nào được retry? =================
 

@@ -97,6 +97,61 @@ svg { flex-shrink: 0; }
 .controls { flex-wrap: wrap; }
 .stage-header > .notice, .stage-header > .error { margin-top: 10px; font-size: .8rem; }
 .stage-header > .error { color: #a63d35; }
+
+.knowledge-panel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 16px;
+}
+.knowledge-card {
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.knowledge-card.full-width {
+  grid-column: 1 / -1;
+}
+.knowledge-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+}
+.knowledge-card p {
+  margin: 0;
+  font-size: 0.81rem;
+  line-height: 1.55;
+  color: #3b3955;
+}
+.glossary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 8px 12px;
+  margin-top: 6px;
+}
+.glossary-item {
+  font-size: 0.79rem;
+  line-height: 1.45;
+  background: #f8f7fd;
+  border-radius: 6px;
+  padding: 6px 10px;
+  border-left: 3px solid var(--accent);
+}
+.glossary-item strong {
+  color: #1e1b38;
+  display: inline-block;
+  margin-right: 4px;
+}
+.glossary-item span {
+  color: #555273;
+}
 .spinner { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -181,6 +236,7 @@ footer span { margin: 0 4px; color: var(--accent); }
   .flow { gap: 4px; }
   .flow span { padding: 5px; font-size: .67rem; }
   .flow svg { width: 13px; }
+  .knowledge-panel { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {
   .spinner { animation: none; }
