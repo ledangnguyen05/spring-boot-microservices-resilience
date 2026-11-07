@@ -3,7 +3,8 @@ import {
   ShieldAlert, ShieldCheck, Zap, Activity, Clock, RefreshCw,
   Layers, ArrowRight, ExternalLink, Play, CheckCircle2,
   AlertOctagon, AlertTriangle, Flame, Terminal, Server,
-  Sliders, Info, HelpCircle, Check, XCircle, ArrowUpRight, Sparkles
+  Sliders, Info, HelpCircle, Check, XCircle, ArrowUpRight,
+  Sparkles, BookOpen, GitCompare
 } from 'lucide-react';
 
 const GATEWAY_URL = 'http://localhost:8080';
@@ -109,7 +110,7 @@ export default function App() {
         preset: `Chậm ${d}ms (Giả lập nghẽn mạng / treo DB)`,
         principle: `Mô phỏng User Service bị nghẽn I/O hoặc truy vấn database quá tải khiến request bị ngâm tới ${d}ms. Trong kiến trúc Microservices, nếu không có Timeout, các request gọi sang sẽ chiếm giữ luồng (thread) vô tận làm cạn kiệt connection pool của Order Service.`,
         targetPattern: 'Pattern 1: TimeLimiter (Timeout 1.5s)',
-        testHint: 'Kéo xuống thẻ [Pattern 1] và bấm nút "🟢 Test Sau Đó (Cắt 1.5s)" để xem TimeLimiter cắt đứt chính xác ở mốc 1500ms thay vì bị ngâm 4s!',
+        testHint: 'Kéo xuống thẻ [Pattern 1] và bấm nút "🟢 Bước 2: Test Có TimeLimiter (Cắt 1.5s)" để chứng kiến TimeLimiter tự ngắt ở mốc 1.5 giây!',
       };
     }
     if (n > 0) {
@@ -222,6 +223,29 @@ export default function App() {
     }
   };
 
+  // Safe response parser for fetch
+  const parseResponseSafely = async (res, begin) => {
+    const elapsed = Date.now() - begin;
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      try {
+        const json = await res.json();
+        return { data: json, elapsed };
+      } catch {}
+    }
+    const text = await res.text();
+    return {
+      data: {
+        outcome: res.ok ? 'OK' : `HTTP_${res.status}`,
+        httpStatus: res.status,
+        message: text || res.statusText || `Phản hồi với mã ${res.status}`,
+        elapsedMs: elapsed,
+        attempts: 1,
+      },
+      elapsed,
+    };
+  };
+
   // Execute demo request
   const runDemo = async (key, path, patternInfo) => {
     setLoading((prev) => ({ ...prev, [key]: true }));
@@ -230,8 +254,7 @@ export default function App() {
     const begin = Date.now();
     try {
       const res = await fetch(fullUrl);
-      const data = await res.json();
-      const elapsed = Date.now() - begin;
+      const { data, elapsed } = await parseResponseSafely(res, begin);
       
       const resultPayload = {
         ...data,
@@ -251,7 +274,7 @@ export default function App() {
       checkHealth();
     } catch (err) {
       const elapsed = Date.now() - begin;
-      const isConnectionRefused = (!gatewayOnline && !orderOnline) || err.message.includes('fetch');
+      const isConnectionRefused = (!gatewayOnline && !orderOnline) || err.message.toLowerCase().includes('failed to fetch');
       const errorObj = {
         outcome: isConnectionRefused ? 'SERVER_OFFLINE' : 'ERROR',
         httpStatus: isConnectionRefused ? 0 : 500,
@@ -298,7 +321,7 @@ export default function App() {
         patternBadge: 'BAN ĐẦU',
         beforeDesc: patternInfo.beforeDesc,
         afterDesc: patternInfo.afterDesc,
-        principleDesc: 'Không có TimeLimiter của Resilience4j: Request phụ thuộc hoàn toàn vào tốc độ phản hồi của User Service (ngâm trọn 4000ms), không thể tự ngắt sớm để cứu luồng.',
+        principleDesc: 'Không có TimeLimiter của Resilience4j: Request phụ thuộc hoàn toàn vào tốc độ phản hồi của User Service (bị ngâm trọn 4000ms), không thể tự ngắt sớm để cứu luồng.',
         timestamp: new Date().toLocaleTimeString('vi-VN'),
       };
       setResults((prev) => ({ ...prev, [key]: payload }));
@@ -547,107 +570,60 @@ export default function App() {
       </div>
 
       {/* ========================================================================= */}
-      {/* 🚀 MÀN HÌNH HIỂN THỊ KẾT QUẢ TRỰC TIẾP (INSTANT RESULT MONITOR - GHIM TRÊN ĐẦU) */}
+      {/* 📚 CẨM NANG CHO NGƯỜI MỚI: MỐI LIÊN HỆ GIỮA CHAOS & 5 PATTERN BÊN DƯỚI   */}
       {/* ========================================================================= */}
-      <section className="instant-monitor-card">
-        <div className="monitor-header">
-          <div className="monitor-title">
-            <Activity size={20} color="#38bdf8" />
-            <span>Màn Hình Kết Quả Trực Diện (Live Result Monitor - Thấy Ngay Kết Quả)</span>
-          </div>
-          {lastTestedResult && (
-            <span className="timestamp-badge">Lần test gần nhất: {lastTestedResult.timestamp}</span>
-          )}
+      <section className="chaos-guide-banner">
+        <div className="guide-banner-header">
+          <BookOpen size={20} color="#818cf8" />
+          <span>DÀNH CHO NGƯỜI MỚI: VAI TRÒ CỦA "CHAOS" VÀ MỐI LIÊN HỆ VỚI 5 PATTERN Ở DƯỚI</span>
+        </div>
+        <div className="guide-banner-intro">
+          <strong>❓ "Áp dụng Chaos" có tác dụng gì?</strong> Hãy tưởng tượng bạn muốn kiểm tra xem <strong>áo giáp (Resilience)</strong> có chống đạn được không, trước tiên bạn phải <strong>bắn đạn (Tạo sự cố Chaos)</strong> vào hệ thống.
+          <br />
+          User Service là dịch vụ phụ trợ phía sau. <strong>Chaos Center chính là công tắc tạo sự cố giả lập</strong> lên User Service để kiểm tra xem tầng bảo vệ của Order Service phát huy tác dụng ra sao:
         </div>
 
-        {lastTestedResult ? (
-          <div className="monitor-body">
-            {/* Hàng 1: Tiêu đề + Badge Trạng Thái */}
-            <div className="monitor-top-row">
-              <div className="monitor-pattern-info">
-                <span className="pattern-pill">{lastTestedResult.patternBadge}</span>
-                <span className="pattern-name">{lastTestedResult.patternTitle}</span>
-              </div>
-              <div className="monitor-outcome-box">
-                <span className={`outcome-tag-large ${
-                  lastTestedResult.outcome === 'OK' || lastTestedResult.outcome === 'OK (CHƯA BẢO VỆ)' ? 'outcome-ok' :
-                  lastTestedResult.outcome === 'TIMEOUT' ? 'outcome-timeout' :
-                  lastTestedResult.outcome === 'BULKHEAD_FULL' ? 'outcome-bulkhead' :
-                  lastTestedResult.outcome === 'CIRCUIT_OPEN' ? 'outcome-cb' :
-                  lastTestedResult.outcome === 'FALLBACK' ? 'outcome-fallback' : 'outcome-cb'
-                }`}>
-                  {lastTestedResult.outcome} (HTTP {lastTestedResult.httpStatus})
-                </span>
-              </div>
+        <div className="guide-steps-grid">
+          <div className="guide-step-card">
+            <div className="guide-step-title text-danger">
+              ⏱️ 1. Giả lập Chậm 4s (Timeout)
             </div>
-
-            {/* Hàng 2: Các chỉ số đo đạc thực tế */}
-            <div className="monitor-metrics-grid">
-              <div className="metric-box">
-                <div className="metric-label"><Clock size={14} /> Thời gian phản hồi thực tế</div>
-                <div className="metric-value highlight-cyan">{lastTestedResult.elapsedMs || lastTestedResult.totalMs || 0} ms</div>
-              </div>
-              <div className="metric-box">
-                <div className="metric-label"><RefreshCw size={14} /> Số lần gọi downstream thực tế</div>
-                <div className="metric-value highlight-yellow">{lastTestedResult.attempts || (lastTestedResult.parallelRequests ? `${lastTestedResult.parallelRequests} luồng` : '1')} lần</div>
-              </div>
-              <div className="metric-box">
-                <div className="metric-label"><ShieldCheck size={14} /> Đánh giá cơ chế</div>
-                <div className="metric-value highlight-green">
-                  {lastTestedResult.outcome === 'SERVER_OFFLINE' ? '⚠️ Mất kết nối backend' :
-                   lastTestedResult.fallback ? '🛡️ Fallback cứu nạn thành công' :
-                   lastTestedResult.outcome === 'TIMEOUT' ? '⏱️ Cắt đúng 1.5s bảo vệ luồng' :
-                   lastTestedResult.outcome === 'BULKHEAD_FULL' ? '🧱 Chặn quá tải trong 2ms' :
-                   lastTestedResult.outcome === 'CIRCUIT_OPEN' ? '⚡ Cầu dao ngắt mạch 0ms' :
-                   lastTestedResult.outcome === 'OK' ? '✅ Thành công' : 'Đã can thiệp an toàn'}
-                </div>
-              </div>
-            </div>
-
-            {/* Hàng 3: ĐỐI CHIẾU BAN ĐẦU VS SAU ĐÓ */}
-            <div className="comparison-container">
-              <div className="comparison-box before-box">
-                <div className="comparison-header text-danger">
-                  <XCircle size={16} /> 1. BAN ĐẦU (Khi KHÔNG CÓ Resilience)
-                </div>
-                <p className="comparison-text">{lastTestedResult.beforeDesc}</p>
-              </div>
-
-              <div className="comparison-box after-box">
-                <div className="comparison-header text-success">
-                  <CheckCircle2 size={16} /> 2. SAU ĐÓ (Nhờ có Resilience bảo vệ)
-                </div>
-                <p className="comparison-text">{lastTestedResult.afterDesc}</p>
-              </div>
-            </div>
-
-            {/* Hàng 4: Giải thích chi tiết & Dữ liệu trả về */}
-            <div className="monitor-detail-box">
-              <div className="detail-message">
-                <strong>Giải thích chi tiết:</strong> {lastTestedResult.principleDesc || lastTestedResult.message}
-              </div>
-              {lastTestedResult.user && (
-                <div className="detail-user-data">
-                  <strong>Dữ liệu User nhận được:</strong> ID: <code>{lastTestedResult.user.id}</code> | Tên: <code>{lastTestedResult.user.name}</code> | Địa chỉ: <code>{lastTestedResult.user.address}</code>
-                  {lastTestedResult.fallback && <span className="fallback-chip">Dữ liệu dự phòng an toàn</span>}
-                </div>
-              )}
-              {lastTestedResult.summary && (
-                <div className="detail-user-data">
-                  <strong>Phân bổ luồng Bulkhead:</strong> {lastTestedResult.summary.OK || 0} request thành công, {lastTestedResult.summary.BULKHEAD_FULL || 0} request bị từ chối ngay lập tức.
-                </div>
-              )}
+            <div style={{ color: '#cbd5e1' }}>
+              Bắt User Service bị đơ 4s ➔ Dành riêng để test <strong>Pattern 1 (TimeLimiter)</strong> xem nó có cắt đứt sau 1.5s hay không.
             </div>
           </div>
-        ) : (
-          <div className="monitor-empty-state">
-            <Sliders size={32} color="#64748b" />
-            <div>
-              <h4>Chưa có lần chạy nào. Hãy chọn và bấm nút Test ở bất kỳ Card nào bên dưới!</h4>
-              <p>Mỗi khi bạn bấm nút Test, kết quả đo đạc thời gian thực và bảng so sánh trực quan <strong>"Ban đầu vs Sau đó"</strong> sẽ hiển thị trực tiếp tại đây.</p>
+
+          <div className="guide-step-card">
+            <div className="guide-step-title" style={{ color: '#facc15' }}>
+              ⚡ 2. Giả lập Lỗi 2 lần đầu (Retry)
+            </div>
+            <div style={{ color: '#cbd5e1' }}>
+              Bắt User Service chập chờn 2 lần đầu ➔ Dành riêng để test <strong>Pattern 2 (Retry)</strong> xem nó có tự gọi lại 3 lần để tự cứu không.
             </div>
           </div>
-        )}
+
+          <div className="guide-step-card">
+            <div className="guide-step-title" style={{ color: '#c084fc' }}>
+              🧱 3. Giả lập Quá tải 10 Request
+            </div>
+            <div style={{ color: '#cbd5e1' }}>
+              Bắn 10 request song song ➔ Dành riêng để test <strong>Pattern 3 (Bulkhead)</strong> xem nó có cấp 3 slot và từ chối 7 request quá tải (429) không.
+            </div>
+          </div>
+
+          <div className="guide-step-card">
+            <div className="guide-step-title text-danger">
+              💥 4. Giả lập Sập 100% (CB & Fallback)
+            </div>
+            <div style={{ color: '#cbd5e1' }}>
+              Bắt User Service chết hẳn ➔ Dành để test <strong>Pattern 4 (Cầu dao ngắt 0ms)</strong> và <strong>Pattern 5 (Trả khách dự phòng Fallback)</strong>.
+            </div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: '12px', fontSize: '12.5px', color: '#38bdf8', fontWeight: 600 }}>
+          💡 <strong>QUY TRÌNH KIỂM THỬ ĐƠN GIẢN:</strong> Bước 1 (Gây sự cố ở Chaos Center) ➔ Bước 2 (Kéo xuống đúng Pattern tương ứng bên dưới và bấm nút Test để chứng kiến kết quả)!
+        </div>
       </section>
 
       {/* ========================================================================= */}
@@ -661,10 +637,10 @@ export default function App() {
           </div>
           <div className="presets-row">
             <span style={{ fontSize: '12px', color: '#94a3b8', marginRight: '6px' }}>Kịch bản mẫu 1-Click:</span>
-            <button className="preset-btn reset" onClick={resetChaos}>🟢 1. Reset Bình thường</button>
-            <button className="preset-btn timeout" onClick={() => applyChaos(4000, 0, 0, '⏱️ Chậm 4s (Timeout Test)')}>⏱️ 2. Chậm 4s (Timeout)</button>
-            <button className="preset-btn retry" onClick={() => applyChaos(0, 0, 2, '⚡ Lỗi 2 lần đầu (Retry Test)')}>⚡ 3. Lỗi 2 lần đầu (Retry)</button>
-            <button className="preset-btn crash" onClick={() => applyChaos(0, 100, 0, '💥 Sập 100% (CircuitBreaker Test)')}>💥 4. Sập 100% 500 (CB)</button>
+            <button className="preset-btn reset" onClick={resetChaos}>🟢 0. Reset bình thường</button>
+            <button className="preset-btn timeout" onClick={() => applyChaos(4000, 0, 0, '⏱️ Chậm 4s (Dành cho Pattern 1 - Timeout)')}>⏱️ 1. Chậm 4s (Dành cho Pattern 1)</button>
+            <button className="preset-btn retry" onClick={() => applyChaos(0, 0, 2, '⚡ Lỗi 2 lần đầu (Dành cho Pattern 2 - Retry)')}>⚡ 2. Lỗi 2 lần đầu (Dành cho Pattern 2)</button>
+            <button className="preset-btn crash" onClick={() => applyChaos(0, 100, 0, '💥 Sập 100% (Dành cho Pattern 4 & 5)')}>💥 3. Sập 100% (Dành cho Pattern 4 & 5)</button>
           </div>
         </div>
 
@@ -796,19 +772,19 @@ export default function App() {
               </div>
             </div>
 
-            {/* Quick Chaos helper */}
-            <div style={{ margin: '8px 0', display: 'flex', gap: '8px' }}>
-              <button
-                className="preset-btn timeout"
-                style={{ fontSize: '11px', padding: '4px 8px' }}
-                onClick={() => applyChaos(4000, 0, 0, '⏱️ Chậm 4s cho TimeLimiter')}
-              >
-                ⏱️ 1-Click: Gây trễ 4s trên User Service
-              </button>
-            </div>
+            {/* Bước 1: Chuẩn bị sự cố */}
+            <div className="card-step-label">1️⃣ Bước 1: Nạp sự cố cho Pattern 1</div>
+            <button
+              className="preset-btn timeout"
+              style={{ fontSize: '11px', padding: '6px 10px', width: '100%', marginBottom: '10px' }}
+              onClick={() => applyChaos(4000, 0, 0, '⏱️ Chậm 4s cho TimeLimiter')}
+            >
+              ⏱️ 1-Click: Gây trễ 4s trên User Service
+            </button>
           </div>
 
           <div>
+            <div className="card-step-label">2️⃣ Bước 2: Bấm Test đối chứng</div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
               <button
                 className="action-btn btn-secondary"
@@ -817,7 +793,7 @@ export default function App() {
                 title="Gọi endpoint gốc không có TimeLimiter (mất trọn 4 giây)"
                 style={{ fontSize: '12px', padding: '8px 6px' }}
               >
-                {loading.timeout_orig ? 'Đang đợi 4s...' : '🔴 Test Ban Đầu (Chờ 4s)'}
+                {loading.timeout_orig ? 'Đang đợi 4s...' : '🔴 Test Gốc (Chờ 4s)'}
               </button>
               <button
                 className="action-btn"
@@ -851,19 +827,19 @@ export default function App() {
               </div>
             </div>
 
-            {/* Quick Chaos helper */}
-            <div style={{ margin: '8px 0', display: 'flex', gap: '8px' }}>
-              <button
-                className="preset-btn retry"
-                style={{ fontSize: '11px', padding: '4px 8px' }}
-                onClick={() => applyChaos(0, 0, 2, '⚡ Lỗi 2 lần đầu cho Retry')}
-              >
-                ⚡ 1-Click: Gây lỗi 2 lần đầu rồi tự hồi
-              </button>
-            </div>
+            {/* Bước 1: Chuẩn bị sự cố */}
+            <div className="card-step-label">1️⃣ Bước 1: Nạp sự cố cho Pattern 2</div>
+            <button
+              className="preset-btn retry"
+              style={{ fontSize: '11px', padding: '6px 10px', width: '100%', marginBottom: '10px' }}
+              onClick={() => applyChaos(0, 0, 2, '⚡ Lỗi 2 lần đầu cho Retry')}
+            >
+              ⚡ 1-Click: Gây lỗi 2 lần đầu rồi tự hồi
+            </button>
           </div>
 
           <div>
+            <div className="card-step-label">2️⃣ Bước 2: Bấm Test thử lại</div>
             <button
               className="action-btn"
               disabled={loading.retry}
@@ -894,8 +870,9 @@ export default function App() {
               </div>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '8px' }}>
-              <span style={{ fontSize: '12px', color: '#94a3b8' }}>Số request song song:</span>
+            <div className="card-step-label">1️⃣ Bước 1: Chọn số lượng request song song</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', margin: '4px 0 10px' }}>
+              <span style={{ fontSize: '12px', color: '#94a3b8' }}>Số request bắn cùng lúc:</span>
               <input
                 type="number"
                 min="1"
@@ -908,6 +885,7 @@ export default function App() {
           </div>
 
           <div>
+            <div className="card-step-label">2️⃣ Bước 2: Bắn đồng thời</div>
             <button
               className="action-btn"
               disabled={loading.bulkhead}
@@ -938,22 +916,21 @@ export default function App() {
               </div>
             </div>
 
-            {/* Quick Chaos helper */}
-            <div style={{ margin: '8px 0', display: 'flex', gap: '8px' }}>
-              <button
-                className="preset-btn crash"
-                style={{ fontSize: '11px', padding: '4px 8px' }}
-                onClick={() => applyChaos(0, 100, 0, '💥 Sập 100% cho Circuit Breaker')}
-              >
-                💥 1-Click: Gây sập 100% User Service
-              </button>
-            </div>
+            {/* Bước 1: Chuẩn bị sự cố */}
+            <div className="card-step-label">1️⃣ Bước 1: Nạp sự cố sập cho Pattern 4</div>
+            <button
+              className="preset-btn crash"
+              style={{ fontSize: '11px', padding: '6px 10px', width: '100%', marginBottom: '10px' }}
+              onClick={() => applyChaos(0, 100, 0, '💥 Sập 100% cho Circuit Breaker')}
+            >
+              💥 1-Click: Gây sập 100% User Service
+            </button>
 
-            <div style={{ margin: '8px 0' }}>
+            <div style={{ margin: '4px 0 8px' }}>
               Trạng thái Cầu Dao: {getCbStateBadge(cbMetrics?.circuitBreaker_demo4?.state || 'CLOSED')}
             </div>
             {cbMetrics?.circuitBreaker_demo4 && (
-              <div style={{ fontSize: '11px', color: '#94a3b8', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <div style={{ fontSize: '11px', color: '#94a3b8', display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '8px' }}>
                 <span>Tỷ lệ lỗi: <strong>{cbMetrics.circuitBreaker_demo4.failureRatePercent >= 0 ? `${cbMetrics.circuitBreaker_demo4.failureRatePercent}%` : 'Chưa đủ mẫu'}</strong></span>
                 <span>Số cuộc gọi đệm: <strong>{cbMetrics.circuitBreaker_demo4.bufferedCalls}/5</strong></span>
               </div>
@@ -961,6 +938,7 @@ export default function App() {
           </div>
 
           <div>
+            <div className="card-step-label">2️⃣ Bước 2: Bấm gọi để kiểm tra Cầu Dao</div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
               <button
                 className="action-btn"
@@ -974,7 +952,7 @@ export default function App() {
                 disabled={loading.cbBurst}
                 onClick={() => burstCb(patternDefs.cb)}
               >
-                {loading.cbBurst ? 'Đang bắn 6 lần...' : '▶ Bắn 6 Lần (Kích hoạt OPEN)'}
+                {loading.cbBurst ? 'Đang bắn 6 lần...' : '▶ Bắn 6 Lần (OPEN)'}
               </button>
             </div>
             <button
@@ -1021,6 +999,7 @@ export default function App() {
           </div>
 
           <div>
+            <div className="card-step-label">🚀 Chạy pipeline kết hợp</div>
             <button
               className="action-btn"
               disabled={loading.combined}
