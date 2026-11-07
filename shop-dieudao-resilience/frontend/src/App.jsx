@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Activity, ArrowRight, Box, ChevronRight, CircleHelp, Clock3, Layers3, LoaderCircle,
+  Activity, ArrowRight, ChevronRight, CircleHelp, Clock3, Layers3, LoaderCircle,
   Package, Play, RefreshCw, RotateCcw, ShieldCheck, UserRound, Zap,
 } from 'lucide-react';
+import DemoResults from './DemoResults.jsx';
 
 const gateway = 'http://localhost:8080';
 const order = 'http://localhost:8082';
@@ -27,8 +28,6 @@ const scenarios = [
     condition: '100% lỗi HTTP 500', action: 'So sánh có và không dự phòng', question: 'Người dùng nhìn thấy gì?' },
 ];
 
-const breakerStates = { CLOSED: 'Cho gọi', OPEN: 'Tạm chặn', HALF_OPEN: 'Gọi thăm dò' };
-const format = (value) => new Intl.NumberFormat('vi-VN').format(value);
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function request(url, method = 'GET') {
@@ -46,74 +45,7 @@ async function requireOk(url, method) {
 async function callOrder(base, path) {
   const { body, status } = await request(base + resilience + path);
   if (!body?.outcome && !body?.summary) throw new Error(`Order Service trả phản hồi ngoài kịch bản (HTTP ${status}).`);
-  return { ...body, status };
-}
-
-function Metric({ label, value }) {
-  return <div className="metric"><span>{label}</span><strong>{value}</strong></div>;
-}
-
-function Results({ id, result, breaker }) {
-  if (id === 'timeout') {
-    const scale = Math.max(...result.map((item) => item.elapsedMs), 1);
-    return <div className="timings">{result.map((item, index) => (
-      <div className="timing" key={index}>
-        <div className="timing-label"><strong>{index === 0 ? 'Feign read timeout' : 'Resilience4j TimeLimiter'}</strong><b>{format(item.elapsedMs)} ms</b></div>
-        <div className="track"><div className={index === 0 ? 'bar muted-bar' : 'bar'} style={{ width: `${item.elapsedMs / scale * 100}%` }} /></div>
-        <small>HTTP {item.status} · {item.outcome}</small>
-      </div>
-    ))}</div>;
-  }
-
-  if (id === 'retry') {
-    return <>
-      <div className="metrics"><Metric label="Lần gọi thật" value={result.attempts} /><Metric label="Phản hồi" value={`HTTP ${result.status}`} /><Metric label="Tổng thời gian" value={`${format(result.elapsedMs)} ms`} /></div>
-      {result.user && <Customer user={result.user} />}
-    </>;
-  }
-
-  if (id === 'bulkhead') {
-    const accepted = result.summary.OK ?? 0;
-    const rejected = result.summary.BULKHEAD_FULL ?? 0;
-    const other = result.parallelRequests - accepted - rejected;
-    return <>
-      <div className="metrics"><Metric label="Gửi đồng thời" value={result.parallelRequests} /><Metric label="Thành công" value={accepted} /><Metric label="Hết suất" value={rejected} /></div>
-      <div className="request-grid" aria-label={`${accepted} thành công, ${rejected} hết suất, ${other} kết quả khác`}>
-        {Array.from({ length: result.parallelRequests }, (_, index) => {
-          const type = index < accepted ? 'ok' : index < accepted + rejected ? 'blocked' : 'other';
-          return <span key={index} className={type}><Box size={17} aria-hidden="true" /></span>;
-        })}
-      </div>
-      {other > 0 && <p className="note">{other} lượt có kết quả khác. Xem phản hồi API bên dưới.</p>}
-    </>;
-  }
-
-  if (id === 'breaker') {
-    return <>
-      <div className="state-flow">{Object.entries(breakerStates).map(([key, label]) => (
-        <div className={breaker === key ? 'state active' : 'state'} key={key}><strong>{key}</strong><span>{label}</span></div>
-      ))}</div>
-      <div className="call-list">{result.map((item, index) => (
-        <div className={`call ${item.attempts === 0 ? 'blocked' : item.status === 200 ? 'ok' : 'other'}`} key={index}>
-          <span>{index < 6 ? `Lượt ${index + 1}` : `Thăm dò ${index - 5}`}</span>
-          <strong>{item.status}</strong>
-          <small>{item.attempts === 0 ? 'Chặn tại Order' : 'Đã gọi User'}</small>
-        </div>
-      ))}</div>
-    </>;
-  }
-
-  return <div className="fallback-grid">{result.map((item, index) => (
-    <div className="fallback-card" key={index}>
-      <span>{index === 0 ? 'Tắt dự phòng' : 'Bật dự phòng'}</span>
-      <strong>HTTP {item.status} · {item.outcome}</strong>
-      {item.user && <Customer user={item.user} />}
-    </div>
-  ))}</div>;
-}
-
-function Customer({ user: customer }) {
-  return <div className="customer"><UserRound size={19} /><div><strong>{customer.name}</strong><span>{customer.address}</span></div></div>;
+  return { body, status };
 }
 
 export default function App() {
@@ -121,6 +53,7 @@ export default function App() {
   const [services, setServices] = useState(null);
   const [breaker, setBreaker] = useState(null);
   const [result, setResult] = useState(null);
+  const [resultView, setResultView] = useState('table');
   const [stage, setStage] = useState('');
   const [error, setError] = useState('');
   const [route, setRoute] = useState(null);
@@ -323,10 +256,9 @@ export default function App() {
             <div className="stage-results">
               <div className="result-heading"><div><div className="section-label">KẾT QUẢ</div><h3>{scenario.question}</h3></div>{route && <span className="route">{route === gateway ? 'Qua Gateway' : 'Gọi trực tiếp'}</span>}</div>
               <div aria-live="polite" aria-busy={busy}>
-                {result ? <Results id={scenario.id} result={result} breaker={breaker} /> : <div className="empty"><Activity size={20} />{busy ? 'Đang chờ phản hồi…' : 'Chạy kịch bản để xem kết quả.'}</div>}
+                <DemoResults scenario={scenario.id} result={result} breaker={breaker} busy={busy} error={error} view={resultView} onViewChange={setResultView} />
               </div>
               {needsRecovery && <p className="note">User Service đã được khôi phục. Gửi lượt thăm dò để kiểm tra mạch đóng lại.</p>}
-              {result && <details className="raw"><summary>Xem phản hồi API</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>}
             </div>
           </section>
         </div>
