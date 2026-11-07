@@ -28,7 +28,7 @@ import java.util.concurrent.Executors;
 @RestController
 @CrossOrigin(origins = "*")
 @Tag(name = "Order Resilience API", description = "Các demo 4 pattern đơn lẻ và kết hợp: Timeout, Retry, Bulkhead, Circuit Breaker")
-@RequestMapping("/api/orders/resilience")
+@RequestMapping({"/api/orders/resilience", "/api/orders/demo"})
 public class ResilienceController {
 
     private final ResilienceDemoService service;
