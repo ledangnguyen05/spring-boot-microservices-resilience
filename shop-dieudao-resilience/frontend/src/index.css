@@ -471,7 +471,7 @@ footer span { margin: 0 4px; color: var(--accent); }
   width: 100%;
   max-width: 900px;
   height: auto;
-  aspect-ratio: 900 / 280;
+  aspect-ratio: 900 / 240;
   display: block;
 }
 

@@ -172,7 +172,6 @@ export default function App() {
           if (!response.body || (response.status === 200 && response.body.orderId !== 1)) {
             throw new Error(`Order Service trả phản hồi ngoài kịch bản (HTTP ${response.status}).`);
           }
-          await pause(300);
           setResult(response);
           break;
         }
@@ -194,51 +193,19 @@ export default function App() {
               setClock(null);
             }
             setResult([...responses]);
-            await pause(450);
           }
           break;
         }
         case 'retry': {
-          setStage('Lần 1: Đang gọi User Service…');
-          const callPromise = callOrder(base, '/retry/1');
-          const response = await callPromise;
-          const attempts = response.body?.attemptResults ?? [];
-          if (attempts.length >= 3) {
-            setStage('Lần 1: User Service trả lỗi 500. Đang chờ 500ms (Exponential Backoff)…');
-            setResult({ ...response, _stagedAttempts: [attempts[0]], _stagedSummary: false });
-            await pause(700);
-
-            setStage('Lần 2: User Service vẫn lỗi 500. Đang chờ 1000ms…');
-            setResult({ ...response, _stagedAttempts: [attempts[0], attempts[1]], _stagedSummary: false });
-            await pause(950);
-
-            setStage('Lần 3: User Service đã phục hồi, trả dữ liệu 200 OK!');
-            setResult({ ...response, _stagedAttempts: attempts, _stagedSummary: false });
-            await pause(500);
-
-            setResult({ ...response, _stagedAttempts: attempts, _stagedSummary: true });
-          } else {
-            setResult(response);
-          }
+          setStage('Đang gọi User Service qua cơ chế Retry (thử lại tự động nếu lỗi)…');
+          const response = await callOrder(base, '/retry/1');
+          setResult(response);
           break;
         }
         case 'bulkhead': {
-          setStage('Đang gửi 10 lượt song song vào Order Service…');
+          setStage('Đang gửi 10 lượt song song (Bulkhead cấp 3 slot / từ chối 7 lượt)…');
           const response = await callOrder(base, '/burst/bulkhead?n=10');
-          const results = response.body?.requestResults ?? [];
-          const rejected = results.filter((r) => r.httpStatus === 429);
-          const accepted = results.filter((r) => r.httpStatus === 200);
-
-          if (rejected.length > 0 && accepted.length > 0) {
-            setStage('7 lượt quá tải bị vách ngăn Bulkhead từ chối ngay tức thì (429)…');
-            setResult({ ...response, _stagedResults: rejected });
-            await pause(900);
-
-            setStage('3 lượt trong hạn ngạch đã hoàn tất xử lý (200 OK)!');
-            setResult({ ...response, _stagedResults: [...rejected, ...accepted] });
-          } else {
-            setResult(response);
-          }
+          setResult(response);
           break;
         }
         case 'breaker': {
@@ -248,7 +215,6 @@ export default function App() {
             const res = await callOrder(base, '/circuit-breaker/1');
             calls.push(res);
             setResult([...calls]);
-            await pause(450);
           }
           await readBreaker(base);
           setNeedsRecovery(true);
@@ -264,7 +230,6 @@ export default function App() {
             const response = await callOrder(base, path);
             phases.push({ ...response, measuredMs: Math.round(performance.now() - start), phase });
             setResult([...phases]);
-            await pause(600);
           };
           await step('Pha 1/5 · Bulkhead: gửi 6 lượt song song (lọc bão tải)…', 'delayMs=600', '/burst/converge?n=6',
             { title: 'Pha 1 · Lọc bão lưu lượng', topics: 'Bulkhead', expect: '3 suất cấp phép (200 OK), 3 lượt quá tải bị từ chối (429)', statusDesc: 'Thành công lọc tải' });
@@ -307,7 +272,6 @@ export default function App() {
           setStage('Đang gọi khi tắt dữ liệu dự phòng…');
           const noFallback = await callOrder(base, '/combined/1?fallback=false');
           setResult([noFallback]);
-          await pause(600);
           await requireOk(base + resilience + '/reset', 'POST');
           setStage('Đang gọi khi bật dữ liệu dự phòng…');
           const withFallback = await callOrder(base, '/combined/1?fallback=true');
