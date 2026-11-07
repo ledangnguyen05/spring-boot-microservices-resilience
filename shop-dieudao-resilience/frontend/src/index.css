@@ -303,6 +303,229 @@ footer span { margin: 0 4px; color: var(--accent); }
   .flow svg { width: 13px; }
   .knowledge-panel { grid-template-columns: 1fr; }
 }
+/* Flow Visualizer Styles */
+.flow-visualizer-container {
+  margin: 18px 0 22px;
+  background: #110e24;
+  border: 1px solid #2a2552;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(10, 8, 25, 0.45);
+}
+
+.visualizer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 18px;
+  background: #181433;
+  border-bottom: 1px solid #282252;
+}
+
+.visualizer-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #c7d2fe;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.pulse-icon {
+  color: #818cf8;
+  animation: iconPulse 2s infinite ease-in-out;
+}
+
+@keyframes iconPulse {
+  0%, 100% { opacity: 0.7; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+
+.visualizer-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.step-counter {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  font-weight: 700;
+  margin-right: 4px;
+}
+
+.vis-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid #332d66;
+  background: #1f1b40;
+  color: #e2e8f0;
+  font-size: 0.75rem;
+  font-weight: 700;
+  transition: all 0.2s ease;
+}
+
+.vis-btn:hover:not(:disabled) {
+  background: #312a66;
+  border-color: #6366f1;
+  color: #ffffff;
+}
+
+.vis-btn.play-btn {
+  background: #4338ca;
+  border-color: #6366f1;
+  color: #ffffff;
+}
+
+.vis-btn.play-btn.active {
+  background: #e11d48;
+  border-color: #f43f5e;
+}
+
+.vis-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pipeline-stage {
+  padding: 14px 10px 4px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: radial-gradient(ellipse at 50% 50%, #1e1942 0%, #110e24 75%);
+}
+
+.pipeline-svg {
+  width: 100%;
+  max-width: 860px;
+  height: auto;
+  min-height: 160px;
+}
+
+.animated-flow-line {
+  animation: dashMove 1.2s linear infinite;
+}
+
+@keyframes dashMove {
+  from { stroke-dashoffset: 24; }
+  to { stroke-dashoffset: 0; }
+}
+
+.pulsing-packet {
+  animation: packetPulse 1.4s infinite ease-in-out;
+}
+
+@keyframes packetPulse {
+  0%, 100% { r: 12px; opacity: 0.95; }
+  50% { r: 15px; opacity: 1; filter: drop-shadow(0 0 8px currentColor); }
+}
+
+.flow-explanation-card {
+  padding: 16px 20px;
+  background: #161230;
+  border-top: 1px solid #282252;
+}
+
+.step-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.step-pill {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: 1px solid;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.step-action-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #94a3b8;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.step-title {
+  color: #ffffff;
+  font-size: 0.98rem;
+  font-weight: 800;
+  margin: 0 0 6px 0;
+  letter-spacing: -0.01em;
+}
+
+.step-desc {
+  color: #cbd5e1;
+  font-size: 0.84rem;
+  line-height: 1.55;
+  margin: 0 0 10px 0;
+}
+
+.step-resilience-box {
+  background: #1f1b40;
+  border-left: 3px solid #6366f1;
+  padding: 8px 12px;
+  border-radius: 0 8px 8px 0;
+  color: #e0e7ff;
+  font-size: 0.79rem;
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+
+.step-resilience-box strong {
+  color: #a5b4fc;
+}
+
+.step-dots {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.step-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid #332d66;
+  background: #13102b;
+  color: #94a3b8;
+  font-size: 0.7rem;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  transition: all 0.2s;
+}
+
+.step-dot:hover {
+  background: #2a235c;
+  color: #ffffff;
+  border-color: #6366f1;
+}
+
+.step-dot.active {
+  background: #6366f1;
+  color: #ffffff;
+  border-color: #818cf8;
+  box-shadow: 0 0 10px rgba(99, 102, 241, 0.5);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .spinner { animation: none; }
+  .animated-flow-line { animation: none; }
+  .pulsing-packet { animation: none; }
+  .pulse-icon { animation: none; }
 }

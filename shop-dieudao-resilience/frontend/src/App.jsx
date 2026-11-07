@@ -5,6 +5,7 @@ import {
   UserRound, Zap,
 } from 'lucide-react';
 import DemoResults, { TimeoutClock } from './DemoResults.jsx';
+import FlowVisualizer from './FlowVisualizer.jsx';
 import { lessons } from './demoLessons.js';
 
 const gateway = 'http://localhost:8080';
@@ -347,6 +348,12 @@ export default function App() {
               <div className="stage-meta"><span className="chapter">{scenario.chapter ?? `KỊCH BẢN ${String(selected).padStart(2, '0')}`}</span><span className="condition"><i />{scenario.condition}</span></div>
               <h2>{scenario.title}</h2><p>{scenario.detail}</p>
               <div className="flow"><span><Package size={16} /> Order Service</span><ArrowRight size={17} aria-hidden="true" /><span className="flow-guard"><scenario.icon size={16} /> {scenario.id === 'normal' ? 'OpenFeign' : scenario.name}</span><ArrowRight size={17} aria-hidden="true" /><span><UserRound size={16} /> User Service</span></div>
+              <FlowVisualizer
+                scenarioId={scenario.id}
+                busy={busy}
+                liveStage={stage}
+                breakerState={scenario.id === 'converge' ? convergeBreaker : breaker}
+              />
               {lesson && (
                 <div className="knowledge-panel">
                   <div className="knowledge-card">
