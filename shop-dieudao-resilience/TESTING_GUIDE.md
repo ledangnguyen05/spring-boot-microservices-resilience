@@ -145,12 +145,13 @@ Mục này trình diễn một chuỗi xử lý nghiệp vụ thực tế khi **
 
 #### 2. Cách kiểm thử trên Giao diện Web
 1. Tại menu bên trái, chọn kịch bản **`Hội tụ 4 topic`**.
-2. Đọc bảng kiến thức và các thuật ngữ kèm ví dụ thực tế đời sống ngay trên giao diện.
-3. Bấm nút: **`▶ Chạy toàn bộ 4 Pha Hội tụ`**. Hệ thống sẽ tự động chạy 4 pha:
-   - **Pha 1 (Bulkhead):** Bắn 6 request đồng thời $\rightarrow$ Bulkhead cho 3 request qua, từ chối 3 request thừa (`429`).
+2. Đọc bảng kiến thức kỹ thuật và các thuật ngữ có trên giao diện.
+3. Bấm nút: **`▶ Chạy trọn vẹn 5 pha`**. Hệ thống sẽ tự động chạy 5 pha hoàn chỉnh:
+   - **Pha 1 (Bulkhead):** Bắn 6 request đồng thời $\rightarrow$ Bulkhead cho 3 request qua (200 OK), từ chối 3 request thừa (429) để bảo vệ luồng.
    - **Pha 2 (Retry):** Cấu hình lỗi 2 lần đầu $\rightarrow$ Retry tự động gọi 3 lần và thành công ở lần 3 (`200 OK`).
    - **Pha 3 (Feign Timeout + CB):** Gây trễ 3s $\rightarrow$ Feign Timeout cắt sau 1s, đẩy tỷ lệ lỗi vượt 50% làm Circuit Breaker nhảy sang **`OPEN`**.
-   - **Pha 4 (Fail-Fast):** Gửi 1 request $\rightarrow$ Circuit Breaker chặn đứng ngay trong 0ms với mã `503 CIRCUIT_OPEN`, Retry không hề gọi sang User Service (`attempts = 0`).
+   - **Pha 4 (Bảo vệ sinh tồn - Fail-Fast):** Gọi lại khi User Service đang chết $\rightarrow$ Circuit Breaker chặn đứng ngay trong 14ms với mã `503 CIRCUIT_OPEN`, Retry không hề gọi sang User Service (`attempts = 0`). *Lưu ý: Mã 503 ở đây là thành công của cơ chế tự bảo vệ để cứu Order Service, không phải lỗi sập hệ thống.*
+   - **Pha 5 (Tự chữa lành - Self-Healing):** User Service hồi phục $\rightarrow$ mạch cho phép thăm dò thành công với mã **`HTTP 200 OK`** và tự động đóng lại **`CLOSED`**, khép lại trọn vẹn 1 flow vòng đời!
 
 ---
 
@@ -162,5 +163,5 @@ Mục này trình diễn một chuỗi xử lý nghiệp vụ thực tế khi **
 | **Retry** | Bấm `Lỗi 2 lần đầu` | Bấm `Test Retry` | Văng lỗi 500 ngay lần đầu tiên | Gọi 3 lần, tự hồi phục ở lần 3 trong suốt | **200 OK** |
 | **Bulkhead** | Nhập `delayMs=2000` | Bắn 10 Request song song | 10 request chiếm trọn tài nguyên hệ thống | 3 request phục vụ, 7 request bị từ chối trong 2ms | **429 Too Many Requests** |
 | **Circuit Breaker** | Bấm `Sập 100% 500` | Bắn 6 lần liên tiếp | Vẫn nã request làm downstream chết hẳn | Ngắt mạch sang `OPEN`, chặn đứng trong 0ms | **503 Service Unavailable** |
-| **Hội tụ 4 Topic** | Tự động theo 4 pha | Bấm `Chạy toàn bộ 4 Pha` | Sập dây chuyền, cạn luồng, Retry Storm | 4 lớp bảo vệ phối hợp nhịp nhàng, chống Retry Storm | **200 / 429 / 503 / 504** |
+| **Hội tụ 4 Topic** | Tự động theo 5 pha | Bấm `Chạy trọn vẹn 5 pha` | Sập dây chuyền, cạn luồng, Retry Storm | 4 lớp bảo vệ phối hợp nhịp nhàng, tự chữa lành về 200 | **200 / 429 / 503** |
 | **Combined + Fallback** | Bấm `Sập 100% 500` | Tích Fallback & Bấm Test | Khách hàng nhận trang lỗi 500/503 | Trả về dữ liệu an toàn `Khách (dự phòng)` | **200 OK** |

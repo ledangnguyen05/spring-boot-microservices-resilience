@@ -138,9 +138,20 @@ public class ResilienceKit {
         this.retryCombined = Retry.of("combined-retry", retryConfig);
         logRetry("combined-retry", retryCombined);
 
-        // Kịch bản hội tụ: dùng CÙNG cấu hình với các demo đơn lẻ nhưng instance RIÊNG (trạng thái độc lập).
+        // Kịch bản hội tụ: dùng CÙNG cấu hình nhưng waitDurationInOpenState = 3s để pha 5 tự chữa lành nhanh.
+        CircuitBreakerConfig cbConvergeConfig = CircuitBreakerConfig.custom()
+                .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)
+                .slidingWindowSize(cbWindow)
+                .minimumNumberOfCalls(cbWindow)
+                .failureRateThreshold(cbThreshold)
+                .waitDurationInOpenState(Duration.ofSeconds(3))
+                .permittedNumberOfCallsInHalfOpenState(cbHalfOpenCalls)
+                .automaticTransitionFromOpenToHalfOpenEnabled(true)
+                .ignoreException(t -> isClientError(unwrap(t)) || unwrap(t) instanceof BulkheadFullException)
+                .build();
+
         this.bulkheadConverge = Bulkhead.of("converge-bulkhead", bulkheadConfig);
-        this.cbConverge = CircuitBreaker.of("converge-cb", cbConfig);
+        this.cbConverge = CircuitBreaker.of("converge-cb", cbConvergeConfig);
         logCircuitBreaker("converge-cb", cbConverge);
         this.retryConverge = Retry.of("converge-retry", retryConfig);
         logRetry("converge-retry", retryConverge);

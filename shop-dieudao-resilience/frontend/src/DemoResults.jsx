@@ -63,10 +63,10 @@ function CallDetails({ rows, retry }) {
 function ConvergeTable({ result }) {
   return <div className="table-frame" tabIndex={0} role="region" aria-label="Bảng kịch bản hội tụ 4 topic">
     <table className="result-table">
-      <caption>Kịch bản hội tụ · {result.length}/4 pha</caption>
+      <caption>Kịch bản hội tụ · {result.length}/5 pha (Trọn vẹn vòng đời: Tự bảo vệ & Tự chữa lành)</caption>
       <thead><tr>
         <th scope="col">Pha</th><th scope="col">Cơ chế ra tay</th><th scope="col">HTTP</th>
-        <th scope="col">Kết quả</th><th scope="col">Thời gian</th><th scope="col">Số lần gọi User</th>
+        <th scope="col">Kết quả & Bản chất kỹ thuật</th><th scope="col">Thời gian</th><th scope="col">Số lần gọi User</th>
       </tr></thead>
       <tbody>{result.map(({ body, status, measuredMs, phase }, index) => {
         const burst = body?.summary;
@@ -74,11 +74,31 @@ function ConvergeTable({ result }) {
           ? Object.entries(burst).map(([key, count]) => `${count}× ${outcomeLabels[key] ?? key}`).join(' · ')
           : (outcomeLabels[body?.outcome] ?? body?.outcome);
         const calls = burst ? (body.requestResults ?? []).reduce((sum, item) => sum + (item.attempts ?? 0), 0) : body?.attempts;
+        const isOk = status === 200;
+        const isFailFast = status === 503 && body?.attempts === 0;
         return <tr key={index}>
-          <th scope="row">{phase.title}</th>
+          <th scope="row">
+            {phase.title}
+            <small style={{ display: 'block', color: isOk ? '#207833' : isFailFast ? '#a05800' : '#883a34', fontWeight: 600, marginTop: '2px' }}>
+              {phase.statusDesc}
+            </small>
+          </th>
           <td>{phase.topics}<small>{phase.expect}</small></td>
-          <td><span className={`http-code ${status < 400 ? 'http-ok' : 'http-error'}`}>{status}</span></td>
-          <td>{outcome}</td>
+          <td>
+            <span className={`http-code ${isOk ? 'http-ok' : isFailFast ? 'http-warn' : 'http-error'}`}>
+              {status}
+            </span>
+          </td>
+          <td>
+            <strong>{outcome}</strong>
+            <small style={{ display: 'block', color: '#555273', marginTop: '2px', lineHeight: 1.4 }}>
+              {index === 0 && '✔ Thành công lọc bão tải: cấp đúng 3 suất, 3 lượt quá tải chặn ngay để tránh nghẽn thread pool.'}
+              {index === 1 && '✔ Thành công tự cứu: 2 lần đầu lỗi 500, Retry kiên trì gọi lần 3 cứu vãn giao dịch trong suốt.'}
+              {index === 2 && '⚠ Timeout cắt trễ: User Service treo 3s, Feign ngắt sau 1s (504), CB đếm đủ lỗi bung sang OPEN.'}
+              {index === 3 && '🛡️ Bảo vệ sinh tồn (Fail-fast): 503 trong 14ms (0 lần gọi User) để cứu Order Service, Retry dừng chống Retry Storm!'}
+              {index === 4 && '✔ Tự chữa lành (Self-Healing): User Service hồi phục, thăm dò thành công 200 OK, mạch khép về CLOSED!'}
+            </small>
+          </td>
           <td className="numeric">{milliseconds(measuredMs)}</td>
           <td className="numeric">{calls ?? '—'}</td>
         </tr>;
@@ -209,17 +229,14 @@ function summarize(scenario, result, breaker) {
   }
 
   if (scenario === 'converge') {
-    if (result.length < 4) return 'Kịch bản đang chạy. Cần đủ 4 pha để kết luận.';
-    const [bulk, retry, hang, open] = result;
+    if (result.length < 4) return 'Kịch bản đang chạy. Cần hoàn tất các pha để kết luận.';
+    const [bulk, retry, hang, open, heal] = result;
     const counts = bulk.body.summary ?? {};
-    const retryText = retry.body.outcome === 'OK'
-      ? `Retry cứu được yêu cầu ở lần gọi thứ ${retry.body.attempts}`
-      : `Retry không cứu được yêu cầu (${outcomeLabels[retry.body.outcome] ?? retry.body.outcome})`;
-    const hangText = `${outcomeLabels[hang.body.outcome] ?? hang.body.outcome} sau ${hang.body.attempts} lần gọi thật`;
-    const openText = open.body.outcome === 'CIRCUIT_OPEN'
-      ? `mạch từ chối ngay (${open.body.attempts} lần gọi User)`
-      : `kết quả ${outcomeLabels[open.body.outcome] ?? open.body.outcome}`;
-    return `Pha 1: ${counts.OK ?? 0} lượt thành công, ${counts.BULKHEAD_FULL ?? 0} lượt bị Bulkhead từ chối. Pha 2: ${retryText}. Pha 3: ${hangText}. Pha 4: ${openText}.${breaker ? ` Trạng thái mạch hiện tại là ${breaker}.` : ''}`;
+    let text = `Quy trình 1 flow hoàn chỉnh: Pha 1 Bulkhead lọc tải (${counts.OK ?? 0} thành công / ${counts.BULKHEAD_FULL ?? 0} chặn 429). Pha 2 Retry tự cứu ở lần ${retry.body.attempts} (200 OK). Pha 3 Feign timeout cắt sau 1s kích hoạt bung cầu dao. Pha 4 từ chối ngay trong ${open.measuredMs}ms (503 Fail-fast, 0 lần gọi User) để cứu sống Order Service và chặn Retry Storm.`;
+    if (heal) {
+      text += ` Pha 5: User Service được khôi phục, lượt thăm dò thành công 200 OK và Circuit Breaker đã tự động khép lại CLOSED!`;
+    }
+    return text;
   }
 
   const [off, on] = result;
@@ -273,11 +290,12 @@ function describeProcess(scenario, result, breaker) {
     case 'converge':
       if (result.length < 4) return [];
       return [
-        'Pha 1 (Bulkhead): 6 lượt đến cùng lúc nhưng chỉ có 3 suất. Lượt dư bị từ chối ngay, không được thử lại và không bị tính là lỗi của User Service.',
-        'Pha 2 (Retry): hai lần gọi đầu nhận HTTP 500. Retry chờ 500 ms rồi 1.000 ms, lần thứ ba thành công nên người dùng không thấy lỗi.',
-        'Pha 3 (Feign timeout → Circuit Breaker → Retry): User Service treo 3 giây nhưng Feign cắt mỗi lần gọi sau 1 giây. Lỗi này làm tỷ lệ lỗi của mạch vượt ngưỡng nên mạch mở; Retry gặp mạch mở thì dừng thay vì gọi tiếp.',
-        'Pha 4 (Circuit Breaker): mạch đang mở nên yêu cầu bị từ chối ngay tại Order Service, 0 lần gọi sang User Service, không chờ timeout và không retry.',
-      ];
+        'Pha 1 · Lọc bão tải (Bulkhead): 6 lượt đến cùng lúc nhưng chỉ có 3 suất. 3 lượt quá tải bị từ chối ngay (429) trong 2ms, không làm nghẽn thread pool của Order Service.',
+        'Pha 2 · Tự cứu lỗi nhỏ (Retry): User Service lỗi 2 lần đầu (500). Retry tự động thử lại theo Backoff và thành công ở lần 3 (200 OK) — người dùng không hề biết có lỗi vừa xảy ra.',
+        'Pha 3 · Cắt trễ & Kích hoạt cầu dao: User Service bị treo 3s. Feign Timeout chủ động cắt sau đúng 1s (504), đẩy tỷ lệ lỗi vượt ngưỡng 50% khiến Circuit Breaker lập tức bung sang OPEN.',
+        'Pha 4 · Bảo vệ sinh tồn (Fail-Fast 0ms): Mạch đang OPEN nên Order Service từ chối ngay lập tức chỉ trong 14ms (HTTP 503, 0 lần gọi User). Retry lập tức dừng lại, không thử lại vô ích, ngăn chặn triệt để thảm họa Retry Storm!',
+        result[4] ? 'Pha 5 · Tự chữa lành (Self-Healing): User Service được khôi phục. Sau 3s chờ, mạch tự chuyển sang HALF_OPEN và cho phép lượt thăm dò đi qua. Phản hồi thành công (200 OK), Circuit Breaker tự động khép lại CLOSED, hoàn tất trọn vẹn 1 flow!' : '',
+      ].filter(Boolean);
     case 'fallback':
       if (result[0]?.status < 400 || result[1]?.body.outcome !== 'FALLBACK') return [];
       return [

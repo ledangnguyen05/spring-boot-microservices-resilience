@@ -61,19 +61,21 @@ export const lessons = {
     ],
   },
   converge: {
-    goal: 'Kiểm chứng chuỗi xử lý đơn hàng thực tế khi cả 4 cơ chế cùng phối hợp bảo vệ 1 lời gọi duy nhất qua 4 pha liên tiếp.',
-    mainPurpose: 'Thiết lập kiến trúc phòng thủ đa tầng phối hợp nhịp nhàng: Bulkhead giới hạn lưu lượng đồng thời ➔ Feign Timeout cắt đứt trễ ➔ Circuit Breaker ngắt mạch khi lỗi tràn lan ➔ Retry tự cứu lỗi chập chờn. Đặc biệt kiểm soát thứ tự lồng nhau: khi Circuit Breaker đã OPEN, Retry lập tức dừng lại, ngăn chặn triệt để thảm họa bão request (Retry Storm).',
+    goal: 'Kiểm chứng trọn vẹn 1 vòng đời (Full Lifecycle) của đơn hàng khi cả 4 cơ chế cùng bảo vệ: từ lọc tải ➔ tự cứu lỗi nhỏ ➔ ngắt cầu dao fail-fast để sống sót khi đối tác chết ➔ tự chữa lành khép mạch về 200 OK khi đối tác hồi phục.',
+    mainPurpose: 'Thiết lập kiến trúc phòng thủ đa tầng phối hợp nhịp nhàng: Bulkhead lọc bão lưu lượng ➔ Feign Timeout cắt đứt trễ ➔ Circuit Breaker ngắt mạch khi lỗi tràn lan ➔ Retry tự cứu lỗi chập chờn. Đặc biệt kiểm soát thứ tự lồng nhau: khi Circuit Breaker đã OPEN, Retry lập tức dừng lại, ngăn chặn triệt để thảm họa bão request (Retry Storm).',
     steps: [
-      'Pha 1: 6 lượt song song (Bulkhead cấp 3 suất, từ chối 3 lượt)',
-      'Pha 2: Lỗi 2 lần đầu (Retry tự thử lại và thành công ở lần 3)',
-      'Pha 3: User Service trễ 3s (Feign timeout ngắt ở 1s, CB đếm lỗi và chuyển sang OPEN)',
-      'Pha 4: Gửi 1 lượt (CB chặn đứng trong 0ms, Retry ngừng gọi lại để chống Retry Storm)',
+      'Pha 1 · Lọc bão tải: 6 lượt đồng thời (Bulkhead cấp 3 suất 200 OK, từ chối 3 lượt 429 để bảo vệ thread)',
+      'Pha 2 · Tự cứu lỗi nhỏ: Lỗi 2 lần đầu (Retry tự thử lại với Backoff, thành công ở lần 3 với 200 OK)',
+      'Pha 3 · Cắt trễ & Bật cầu dao: User Service treo 3s (Feign timeout ngắt sau 1s, CB đạt ngưỡng lỗi bung sang OPEN)',
+      'Pha 4 · Bảo vệ sinh tồn: Gọi lại khi đối tác đang chết (CB trả HTTP 503 ngay trong 14ms, 0 lần gọi User, Retry dừng ngay)',
+      'Pha 5 · Tự chữa lành: User Service hồi phục (thăm dò thành công HTTP 200 OK, mạch tự động khép về CLOSED)',
     ],
-    takeaway: 'Thấy rõ thứ tự lồng nhau: Retry (ngoài) ➔ Circuit Breaker ➔ Bulkhead ➔ Feign timeout. Đặc biệt, khi Circuit Breaker đã OPEN, Retry lập tức ngừng gọi lại, ngăn chặn nguy cơ Retry Storm.',
+    takeaway: 'Thấy rõ ý nghĩa của từng mã: 200 OK (xử lý thành công), 429 (Bulkhead lọc tải), 503 ở Pha 4 (KHÔNG PHẢI lỗi sập hệ thống, mà là Circuit Breaker can thiệp thành công trong 14ms để cứu sống Order Service), và Pha 5 tự chữa lành về 200 OK hoàn tất trọn vẹn 1 flow.',
     terms: [
-      ['Decorators Pipeline', 'Thứ tự lồng nhau chuẩn: Retry (ngoài cùng) ➔ Circuit Breaker ➔ Bulkhead ➔ Feign Timeout (trong cùng).'],
-      ['Chống Retry Storm', 'Khi Circuit Breaker chuyển sang trạng thái OPEN, Retry nhận diện ngoại lệ CallNotPermittedException và không thực hiện thử lại vô ích.'],
-      ['Fail-fast', 'Phản hồi thất bại tức thì (0ms) ngay tại Order Service mà không phát sinh thêm bất kỳ lượt gọi nào sang User Service.'],
+      ['Decorators Pipeline', 'Thứ tự lồng nhau: Retry (ngoài cùng) ➔ Circuit Breaker ➔ Bulkhead ➔ Feign Timeout (trong cùng) ➔ User Service.'],
+      ['Fail-Fast (HTTP 503 ở Pha 4)', 'Phản hồi từ chối ngay trong 14ms tại Order Service với 0 lần gọi User. Đây là thành công của cơ chế tự bảo vệ khi đối tác sập.'],
+      ['Chống Retry Storm', 'Khi Circuit Breaker chuyển sang OPEN, Retry nhận diện và dừng ngay lập tức, không thử lại vô ích.'],
+      ['Tự chữa lành (Self-Healing)', 'Khi User Service hoạt động bình thường trở lại, mạch tự cho thăm dò và đóng lại CLOSED với HTTP 200 OK.'],
     ],
   },
   fallback: {
@@ -87,3 +89,4 @@ export const lessons = {
     ],
   },
 };
+

@@ -35,8 +35,8 @@ const scenarios = [
     condition: '100% lỗi HTTP 500', action: 'Gửi 6 lượt liên tiếp', question: 'Khi nào nên ngừng gọi?' },
   { id: 'converge', name: 'Hội tụ 4 topic', icon: Network, label: 'Tổng hợp · Cả 4 cùng chạy', title: 'Bốn cơ chế bảo vệ cùng một lời gọi',
     chapter: 'HỘI TỤ 4 TOPIC',
-    detail: 'Một đường gọi duy nhất: Retry → Circuit Breaker → Bulkhead → Feign timeout. Kịch bản tự đổi sự cố qua 4 pha để thấy từng cơ chế ra tay.',
-    condition: '4 pha · tự đổi sự cố', action: 'Chạy kịch bản 4 pha', question: 'Cơ chế nào ra tay ở mỗi pha?' },
+    detail: 'Một đường gọi duy nhất: Retry → Circuit Breaker → Bulkhead → Feign timeout. Kịch bản tự động chạy qua 5 pha để thấy trọn vẹn vòng đời: lọc tải, tự cứu, tự bảo vệ fail-fast, và tự chữa lành về 200 OK.',
+    condition: '5 pha · tự chữa lành', action: 'Chạy trọn vẹn 5 pha', question: 'Cơ chế nào ra tay và kết quả ra sao ở mỗi pha?' },
   { id: 'fallback', name: 'Fallback & Kết hợp', icon: ShieldCheck, label: 'Bonus · Mở rộng', title: 'Vẫn có dữ liệu để hiển thị',
     chapter: 'MỞ RỘNG (BONUS)',
     detail: 'So sánh phản hồi của luồng kết hợp khi bật và tắt dữ liệu khách hàng dự phòng.',
@@ -216,22 +216,47 @@ export default function App() {
           const step = async (stageText, chaosQuery, path, phase) => {
             setStage(stageText);
             await requireOk(user + '/api/chaos/reset', 'POST');
-            await requireOk(`${user}/api/chaos?${chaosQuery}`, 'POST');
+            if (chaosQuery) await requireOk(`${user}/api/chaos?${chaosQuery}`, 'POST');
             const start = performance.now();
             const response = await callOrder(base, path);
             phases.push({ ...response, measuredMs: Math.round(performance.now() - start), phase });
             setResult([...phases]);
           };
-          await step('Pha 1/4 · Bulkhead: gửi 6 lượt song song…', 'delayMs=600', '/burst/converge?n=6',
-            { title: 'Pha 1 · Lưu lượng tăng đột biến', topics: 'Bulkhead', expect: '3 suất xử lý, các lượt dư bị từ chối ngay' });
-          await step('Pha 2/4 · Retry: User Service lỗi thoáng qua…', 'failFirstN=2', '/converge/1',
-            { title: 'Pha 2 · Lỗi thoáng qua', topics: 'Retry', expect: '2 lần đầu lỗi 500, lần 3 thành công' });
-          await step('Pha 3/4 · Feign timeout: User Service bị treo…', 'delayMs=3000', '/converge/1',
-            { title: 'Pha 3 · User Service bị treo', topics: 'Feign timeout + Circuit Breaker + Retry', expect: 'Feign cắt sau 1 giây, mạch mở, Retry dừng' });
-          await step('Pha 4/4 · Circuit Breaker: gọi lại khi mạch đang mở…', 'delayMs=3000', '/converge/1',
-            { title: 'Pha 4 · Mạch đang mở', topics: 'Circuit Breaker + Retry', expect: 'Từ chối ngay, không gọi User, không retry' });
-          const status = await requireOk(base + resilience + '/status');
-          setConvergeBreaker(status.circuitBreaker_converge.state);
+          await step('Pha 1/5 · Bulkhead: gửi 6 lượt song song (lọc bão tải)…', 'delayMs=600', '/burst/converge?n=6',
+            { title: 'Pha 1 · Lọc bão lưu lượng', topics: 'Bulkhead', expect: '3 suất cấp phép (200 OK), 3 lượt quá tải bị từ chối (429)', statusDesc: 'Thành công lọc tải' });
+          await step('Pha 2/5 · Retry: User Service lỗi chập chờn 2 lần đầu…', 'failFirstN=2', '/converge/1',
+            { title: 'Pha 2 · Lỗi mạng chập chờn', topics: 'Retry', expect: 'Lần 1 & 2 lỗi 500, Retry tự gọi lại lần 3 thành công (200 OK)', statusDesc: 'Thành công tự cứu' });
+          await step('Pha 3/5 · Feign timeout: User Service bị treo 3s…', 'delayMs=3000', '/converge/1',
+            { title: 'Pha 3 · Dịch vụ đối tác bị treo', topics: 'Feign timeout + CB', expect: 'Feign cắt sau 1s (504), CB ghi nhận lỗi và bung mạch OPEN', statusDesc: 'Can thiệp ngắt mạch' });
+          await step('Pha 4/5 · Circuit Breaker: gọi khi đối tác đang chết…', 'delayMs=3000', '/converge/1',
+            { title: 'Pha 4 · Mạch OPEN (Bảo vệ sinh tồn)', topics: 'Circuit Breaker + Retry', expect: 'Từ chối ngay trong 14ms (503), 0 lần gọi User, Retry dừng chống Retry Storm', statusDesc: 'Bảo vệ sinh tồn (Fail-fast)' });
+
+          // Pha 5: Tự chữa lành & Khôi phục về 200 OK
+          setStage('Pha 5/5 · Tự chữa lành: khôi phục User Service & chờ mạch thăm dò…');
+          await requireOk(user + '/api/chaos/reset', 'POST');
+          let cbState = 'OPEN';
+          for (let i = 0; i < 5 && cbState === 'OPEN'; i++) {
+            await pause(1000);
+            const status = await requireOk(base + resilience + '/status');
+            cbState = status.circuitBreaker_converge?.state;
+            setConvergeBreaker(cbState);
+          }
+          setStage('Pha 5/5 · Gửi lượt thăm dò hoàn tất khép mạch…');
+          const start5 = performance.now();
+          const response5 = await callOrder(base, '/converge/1');
+          phases.push({
+            ...response5,
+            measuredMs: Math.round(performance.now() - start5),
+            phase: {
+              title: 'Pha 5 · Tự chữa lành (Self-Healing)',
+              topics: 'Circuit Breaker (CLOSED)',
+              expect: 'Thăm dò thành công (200 OK), mạch tự đóng lại CLOSED, khép lại trọn vẹn 1 flow!',
+              statusDesc: 'Thành công khôi phục (200 OK)',
+            },
+          });
+          setResult([...phases]);
+          const finalStatus = await requireOk(base + resilience + '/status');
+          setConvergeBreaker(finalStatus.circuitBreaker_converge?.state);
           break;
         }
         case 'fallback': {
