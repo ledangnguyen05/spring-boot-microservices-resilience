@@ -1,1045 +1,337 @@
-import React, { useState, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
-  ShieldAlert, ShieldCheck, Zap, Activity, Clock, RefreshCw,
-  Layers, ArrowRight, ExternalLink, Play, CheckCircle2,
-  AlertOctagon, AlertTriangle, Flame, Terminal, Server,
-  Sliders, Info, HelpCircle, Check, XCircle, ArrowUpRight,
-  Sparkles, BookOpen, GitCompare
+  Activity, ArrowRight, Box, ChevronRight, CircleHelp, Clock3, Layers3, LoaderCircle,
+  Package, Play, RefreshCw, RotateCcw, ShieldCheck, UserRound, Zap,
 } from 'lucide-react';
 
-const GATEWAY_URL = 'http://localhost:8080';
-const USER_SERVICE_URL = 'http://localhost:8081';
-const ORDER_SERVICE_URL = 'http://localhost:8082';
+const gateway = 'http://localhost:8080';
+const order = 'http://localhost:8082';
+const user = 'http://localhost:8081';
+const resilience = '/api/orders/resilience';
+
+const scenarios = [
+  { id: 'timeout', name: 'Timeout', icon: Clock3, label: 'Phản hồi chậm', title: 'Khách hàng đang chờ',
+    detail: 'User Service mất 4 giây để trả thông tin khách. So sánh thời gian chờ của Feign và TimeLimiter.',
+    condition: 'Trễ 4 giây', action: 'So sánh thời gian chờ', question: 'Hệ thống chờ bao lâu?' },
+  { id: 'retry', name: 'Retry', icon: RefreshCw, label: 'Lỗi tạm thời', title: 'Lỗi hai lần rồi hồi phục',
+    detail: 'User Service trả lỗi ở hai lần gọi đầu. Order Service tự thử lại trong cùng một yêu cầu.',
+    condition: 'Hai lỗi HTTP 500', action: 'Thử lấy thông tin khách', question: 'Có thể tự thử lại không?' },
+  { id: 'bulkhead', name: 'Bulkhead', icon: Layers3, label: 'Lưu lượng tăng', title: 'Mười lượt đến cùng lúc',
+    detail: 'Mỗi lượt mất 2 giây. Order Service chỉ cấp ba suất gọi User Service đồng thời.',
+    condition: '10 lượt · 3 suất', action: 'Gửi 10 lượt song song', question: 'Nhận được bao nhiêu lượt?' },
+  { id: 'breaker', name: 'Circuit Breaker', icon: Zap, label: 'Lỗi liên tục', title: 'Tạm ngừng gọi dịch vụ lỗi',
+    detail: 'User Service liên tục trả lỗi. Quan sát khi Order Service bắt đầu chặn các lời gọi mới.',
+    condition: '100% lỗi HTTP 500', action: 'Gửi 6 lượt liên tiếp', question: 'Khi nào nên ngừng gọi?' },
+  { id: 'fallback', name: 'Fallback', icon: ShieldCheck, label: 'Chế độ dự phòng', title: 'Vẫn có dữ liệu để hiển thị',
+    detail: 'So sánh phản hồi của luồng kết hợp khi bật và tắt dữ liệu khách hàng dự phòng.',
+    condition: '100% lỗi HTTP 500', action: 'So sánh có và không dự phòng', question: 'Người dùng nhìn thấy gì?' },
+];
+
+const breakerStates = { CLOSED: 'Cho gọi', OPEN: 'Tạm chặn', HALF_OPEN: 'Gọi thăm dò' };
+const format = (value) => new Intl.NumberFormat('vi-VN').format(value);
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function request(url, method = 'GET') {
+  const response = await fetch(url, { method, signal: AbortSignal.timeout(25000) });
+  const body = await response.json().catch(() => null);
+  return { body, status: response.status };
+}
+
+async function requireOk(url, method) {
+  const { body, status } = await request(url, method);
+  if (status !== 200 || !body) throw new Error(`Dịch vụ trả HTTP ${status}.`);
+  return body;
+}
+
+async function callOrder(base, path) {
+  const { body, status } = await request(base + resilience + path);
+  if (!body?.outcome && !body?.summary) throw new Error(`Order Service trả phản hồi ngoài kịch bản (HTTP ${status}).`);
+  return { ...body, status };
+}
+
+function Metric({ label, value }) {
+  return <div className="metric"><span>{label}</span><strong>{value}</strong></div>;
+}
+
+function Results({ id, result, breaker }) {
+  if (id === 'timeout') {
+    const scale = Math.max(...result.map((item) => item.elapsedMs), 1);
+    return <div className="timings">{result.map((item, index) => (
+      <div className="timing" key={index}>
+        <div className="timing-label"><strong>{index === 0 ? 'Feign read timeout' : 'Resilience4j TimeLimiter'}</strong><b>{format(item.elapsedMs)} ms</b></div>
+        <div className="track"><div className={index === 0 ? 'bar muted-bar' : 'bar'} style={{ width: `${item.elapsedMs / scale * 100}%` }} /></div>
+        <small>HTTP {item.status} · {item.outcome}</small>
+      </div>
+    ))}</div>;
+  }
+
+  if (id === 'retry') {
+    return <>
+      <div className="metrics"><Metric label="Lần gọi thật" value={result.attempts} /><Metric label="Phản hồi" value={`HTTP ${result.status}`} /><Metric label="Tổng thời gian" value={`${format(result.elapsedMs)} ms`} /></div>
+      {result.user && <Customer user={result.user} />}
+    </>;
+  }
+
+  if (id === 'bulkhead') {
+    const accepted = result.summary.OK ?? 0;
+    const rejected = result.summary.BULKHEAD_FULL ?? 0;
+    const other = result.parallelRequests - accepted - rejected;
+    return <>
+      <div className="metrics"><Metric label="Gửi đồng thời" value={result.parallelRequests} /><Metric label="Thành công" value={accepted} /><Metric label="Hết suất" value={rejected} /></div>
+      <div className="request-grid" aria-label={`${accepted} thành công, ${rejected} hết suất, ${other} kết quả khác`}>
+        {Array.from({ length: result.parallelRequests }, (_, index) => {
+          const type = index < accepted ? 'ok' : index < accepted + rejected ? 'blocked' : 'other';
+          return <span key={index} className={type}><Box size={17} aria-hidden="true" /></span>;
+        })}
+      </div>
+      {other > 0 && <p className="note">{other} lượt có kết quả khác. Xem phản hồi API bên dưới.</p>}
+    </>;
+  }
+
+  if (id === 'breaker') {
+    return <>
+      <div className="state-flow">{Object.entries(breakerStates).map(([key, label]) => (
+        <div className={breaker === key ? 'state active' : 'state'} key={key}><strong>{key}</strong><span>{label}</span></div>
+      ))}</div>
+      <div className="call-list">{result.map((item, index) => (
+        <div className={`call ${item.attempts === 0 ? 'blocked' : item.status === 200 ? 'ok' : 'other'}`} key={index}>
+          <span>{index < 6 ? `Lượt ${index + 1}` : `Thăm dò ${index - 5}`}</span>
+          <strong>{item.status}</strong>
+          <small>{item.attempts === 0 ? 'Chặn tại Order' : 'Đã gọi User'}</small>
+        </div>
+      ))}</div>
+    </>;
+  }
+
+  return <div className="fallback-grid">{result.map((item, index) => (
+    <div className="fallback-card" key={index}>
+      <span>{index === 0 ? 'Tắt dự phòng' : 'Bật dự phòng'}</span>
+      <strong>HTTP {item.status} · {item.outcome}</strong>
+      {item.user && <Customer user={item.user} />}
+    </div>
+  ))}</div>;
+}
+
+function Customer({ user: customer }) {
+  return <div className="customer"><UserRound size={19} /><div><strong>{customer.name}</strong><span>{customer.address}</span></div></div>;
+}
 
 export default function App() {
-  // Service health status
-  const [gatewayOnline, setGatewayOnline] = useState(false);
-  const [orderOnline, setOrderOnline] = useState(false);
-  const [userOnline, setUserOnline] = useState(false);
-
-  // Chaos state
-  const [chaos, setChaos] = useState({ delayMs: 0, failPercent: 0, failFirstNLeft: 0, totalCalls: 0 });
-  const [delayInput, setDelayInput] = useState(0);
-  const [failPercentInput, setFailPercentInput] = useState(0);
-  const [failFirstNInput, setFailFirstNInput] = useState(0);
-
-  // Inspector for Chaos applied
-  const [lastChaosApplied, setLastChaosApplied] = useState(null);
-
-  // Pattern results & loading
-  const [loading, setLoading] = useState({});
-  const [results, setResults] = useState({});
-  const [lastTestedResult, setLastTestedResult] = useState(null);
-  const [cbMetrics, setCbMetrics] = useState(null);
-  const [burstCount, setBurstCount] = useState(10);
-  const [fallbackEnabled, setFallbackEnabled] = useState(true);
-
-  // Activity logs
-  const [logs, setLogs] = useState([]);
-
-  const addLog = (tag, status, message, elapsedMs) => {
-    const time = new Date().toLocaleTimeString('vi-VN');
-    setLogs((prev) => [
-      { id: Date.now() + Math.random(), time, tag, status, message, elapsedMs },
-      ...prev.slice(0, 49),
-    ]);
-  };
-
-  // Poll health & status
-  const checkHealth = async () => {
-    // 1. User Service (:8081)
-    try {
-      const res = await fetch(`${USER_SERVICE_URL}/api/chaos`);
-      if (res.ok) {
-        const data = await res.json();
-        setUserOnline(true);
-        setChaos(data);
-      } else {
-        setUserOnline(false);
-      }
-    } catch {
-      setUserOnline(false);
-    }
-
-    // 2. Order Service (:8082)
-    try {
-      const res = await fetch(`${ORDER_SERVICE_URL}/api/orders/resilience/status`);
-      if (res.ok) {
-        const data = await res.json();
-        setOrderOnline(true);
-        setCbMetrics(data);
-      } else {
-        setOrderOnline(false);
-      }
-    } catch {
-      setOrderOnline(false);
-    }
-
-    // 3. API Gateway (:8080) - Thử cả /actuator/health và /health
-    let gwOk = false;
-    try {
-      const res = await fetch(`${GATEWAY_URL}/actuator/health`);
-      if (res.ok) gwOk = true;
-    } catch {}
-    if (!gwOk) {
-      try {
-        const res = await fetch(`${GATEWAY_URL}/health`);
-        if (res.ok) gwOk = true;
-      } catch {}
-    }
-    setGatewayOnline(gwOk);
-  };
+  const [selected, setSelected] = useState(0);
+  const [services, setServices] = useState(null);
+  const [breaker, setBreaker] = useState(null);
+  const [result, setResult] = useState(null);
+  const [stage, setStage] = useState('');
+  const [error, setError] = useState('');
+  const [route, setRoute] = useState(null);
+  const [needsRecovery, setNeedsRecovery] = useState(false);
+  const running = useRef(false);
+  const scenario = scenarios[selected];
 
   useEffect(() => {
-    checkHealth();
-    const interval = setInterval(checkHealth, 3000);
-    return () => clearInterval(interval);
+    let active = true;
+    let checking = false;
+    async function refresh() {
+      if (checking || running.current) return;
+      checking = true;
+      const [gw, orders, users] = await Promise.allSettled([
+        requireOk(gateway + '/actuator/health'),
+        requireOk(order + resilience + '/status'),
+        requireOk(user + '/api/chaos'),
+      ]);
+      checking = false;
+      if (!active || running.current) return;
+      setServices({ gateway: gw.status === 'fulfilled', order: orders.status === 'fulfilled', user: users.status === 'fulfilled' });
+      setBreaker(orders.value?.circuitBreaker_demo4?.state ?? null);
+    }
+    refresh();
+    const interval = setInterval(refresh, 2500);
+    return () => { active = false; clearInterval(interval); };
   }, []);
 
-  // Xác định base URL thông minh: Ưu tiên Gateway (:8080), nếu Gateway chưa bật thì gọi thẳng Order (:8082)
-  const getEffectiveOrderBaseUrl = () => {
-    if (gatewayOnline) return GATEWAY_URL;
-    if (orderOnline) return ORDER_SERVICE_URL;
-    return GATEWAY_URL;
-  };
+  const base = services?.gateway ? gateway : order;
+  const ready = services?.order && services?.user;
+  const busy = Boolean(stage);
 
-  // Helper sinh giải thích nguyên lý cho Chaos
-  const getChaosExplanation = (d, p, n) => {
-    if (d >= 1500) {
-      return {
-        preset: `Chậm ${d}ms (Giả lập nghẽn mạng / treo DB)`,
-        principle: `Mô phỏng User Service bị nghẽn I/O hoặc truy vấn database quá tải khiến request bị ngâm tới ${d}ms. Trong kiến trúc Microservices, nếu không có Timeout, các request gọi sang sẽ chiếm giữ luồng (thread) vô tận làm cạn kiệt connection pool của Order Service.`,
-        targetPattern: 'Pattern 1: TimeLimiter (Timeout 1.5s)',
-        testHint: 'Kéo xuống thẻ [Pattern 1] và bấm nút "🟢 Bước 2: Test Có TimeLimiter (Cắt 1.5s)" để chứng kiến TimeLimiter tự ngắt ở mốc 1.5 giây!',
-      };
-    }
-    if (n > 0) {
-      return {
-        preset: `Lỗi ${n} lần đầu rồi tự hồi (Sự cố chớp tắt / Transient Fault)`,
-        principle: `Mô phỏng sự cố mạng chập chờn hoặc instance User Service đang khởi động lại (warm-up). Đúng ${n} request đầu tiên sẽ trả HTTP 500, từ request thứ ${n + 1} sẽ bình thường trở lại.`,
-        targetPattern: 'Pattern 2: Resilience4j Retry (Tối đa 3 lần)',
-        testHint: 'Kéo xuống thẻ [Pattern 2] và bấm "▶ Bấm Test Retry" để xem cơ chế tự động thử lại 3 lần với Exponential Backoff tự cứu sống request!',
-      };
-    }
-    if (p >= 50) {
-      return {
-        preset: `Sập ${p}% (Giả lập dịch vụ sập hoàn toàn / Hard Outage)`,
-        principle: `Mô phỏng User Service bị sập hoàn toàn. Tỷ lệ lỗi 500 lên tới ${p}%. Khi downstream sập, upstream phải có cơ chế ngắt cầu dao (Circuit Breaker) để không làm kiệt quệ tài nguyên và có dữ liệu dự phòng (Fallback) cho khách hàng.`,
-        targetPattern: 'Pattern 4 (Circuit Breaker) & Pattern 5 (Combined + Fallback)',
-        testHint: 'Kéo xuống thẻ [Pattern 4] bấm "▶ Bắn 6 Lần" để cầu dao nhảy sang OPEN (ngắt mạch 0ms), hoặc xuống [Pattern 5] để xem dữ liệu Fallback an toàn!',
-      };
-    }
-    return {
-      preset: 'Bình thường (Reset sạch sẽ)',
-      principle: 'User Service hoạt động ở điều kiện lý tưởng: độ trễ 0ms, tỷ lệ lỗi 0%. Mọi cuộc gọi sẽ phản hồi ngay lập tức trong vài mili-giây với HTTP 200 OK.',
-      targetPattern: 'Tất cả các Pattern',
-      testHint: 'Bây giờ mọi request sẽ thành công với trạng thái bình thường 200 OK.',
-    };
-  };
+  function select(index) {
+    setSelected(index);
+    setResult(null);
+    setError('');
+    setRoute(null);
+    setNeedsRecovery(false);
+  }
 
-  // Configure chaos
-  const applyChaos = async (d, p, n, presetName = null) => {
-    const prev = { ...chaos };
+  async function readBreaker(baseUrl) {
+    const status = await requireOk(baseUrl + resilience + '/status');
+    setBreaker(status.circuitBreaker_demo4.state);
+    return status.circuitBreaker_demo4.state;
+  }
+
+  async function perform(work, cleanup = true) {
+    if (running.current) return;
+    running.current = true;
+    setError('');
+    setStage('Đang chuẩn bị…');
     try {
-      const res = await fetch(`${USER_SERVICE_URL}/api/chaos?delayMs=${d}&failPercent=${p}&failFirstN=${n}`, {
-        method: 'POST',
-      });
-      const data = await res.json();
-      setChaos(data);
-      setDelayInput(data.delayMs || 0);
-      setFailPercentInput(data.failPercent || 0);
-      setFailFirstNInput(data.failFirstNLeft || 0);
-
-      const explanation = getChaosExplanation(d, p, n);
-      setLastChaosApplied({
-        timestamp: new Date().toLocaleTimeString('vi-VN'),
-        name: presetName || explanation.preset,
-        before: {
-          delayMs: prev.delayMs,
-          failPercent: prev.failPercent,
-          failFirstNLeft: prev.failFirstNLeft,
-        },
-        after: {
-          delayMs: data.delayMs,
-          failPercent: data.failPercent,
-          failFirstNLeft: data.failFirstNLeft,
-        },
-        principle: explanation.principle,
-        targetPattern: explanation.targetPattern,
-        testHint: explanation.testHint,
-      });
-
-      addLog('CHAOS', 200, `Cập nhật Chaos: delay=${data.delayMs}ms, fail=${data.failPercent}%, failFirstN=${data.failFirstNLeft}`, 0);
-    } catch (err) {
-      addLog('CHAOS', 500, `Lỗi cập nhật Chaos: ${err.message}`, 0);
-    }
-  };
-
-  const resetChaos = async () => {
-    const prev = { ...chaos };
-    try {
-      const res = await fetch(`${USER_SERVICE_URL}/api/chaos/reset`, { method: 'POST' });
-      const data = await res.json();
-      setChaos(data);
-      setDelayInput(0);
-      setFailPercentInput(0);
-      setFailFirstNInput(0);
-
-      const explanation = getChaosExplanation(0, 0, 0);
-      setLastChaosApplied({
-        timestamp: new Date().toLocaleTimeString('vi-VN'),
-        name: '🟢 Đã Reset User Service về bình thường',
-        before: {
-          delayMs: prev.delayMs,
-          failPercent: prev.failPercent,
-          failFirstNLeft: prev.failFirstNLeft,
-        },
-        after: {
-          delayMs: 0,
-          failPercent: 0,
-          failFirstNLeft: 0,
-        },
-        principle: explanation.principle,
-        targetPattern: explanation.targetPattern,
-        testHint: explanation.testHint,
-      });
-
-      addLog('CHAOS', 200, 'Đã Reset User Service về bình thường (delay=0, fail=0)', 0);
-    } catch (err) {
-      addLog('CHAOS', 500, `Lỗi Reset Chaos: ${err.message}`, 0);
-    }
-  };
-
-  // Reset Circuit Breaker
-  const resetCircuitBreaker = async () => {
-    const baseUrl = getEffectiveOrderBaseUrl();
-    try {
-      const res = await fetch(`${baseUrl}/api/orders/resilience/reset`, { method: 'POST' });
-      const data = await res.json();
-      setCbMetrics(data);
-      addLog('CB_RESET', 200, 'Đã Reset toàn bộ CircuitBreaker về trạng thái CLOSED', 0);
-    } catch (err) {
-      addLog('CB_RESET', 500, `Lỗi Reset CB: ${err.message}`, 0);
-    }
-  };
-
-  // Safe response parser for fetch
-  const parseResponseSafely = async (res, begin) => {
-    const elapsed = Date.now() - begin;
-    const contentType = res.headers.get('content-type') || '';
-    if (contentType.includes('application/json')) {
-      try {
-        const json = await res.json();
-        return { data: json, elapsed };
-      } catch {}
-    }
-    const text = await res.text();
-    return {
-      data: {
-        outcome: res.ok ? 'OK' : `HTTP_${res.status}`,
-        httpStatus: res.status,
-        message: text || res.statusText || `Phản hồi với mã ${res.status}`,
-        elapsedMs: elapsed,
-        attempts: 1,
-      },
-      elapsed,
-    };
-  };
-
-  // Execute demo request
-  const runDemo = async (key, path, patternInfo) => {
-    setLoading((prev) => ({ ...prev, [key]: true }));
-    const baseUrl = getEffectiveOrderBaseUrl();
-    const fullUrl = `${baseUrl}${path}`;
-    const begin = Date.now();
-    try {
-      const res = await fetch(fullUrl);
-      const { data, elapsed } = await parseResponseSafely(res, begin);
-      
-      const resultPayload = {
-        ...data,
-        key,
-        routeUsed: baseUrl === GATEWAY_URL ? 'Qua API Gateway (:8080)' : 'Trực tiếp Order Service (:8082)',
-        patternTitle: patternInfo.title,
-        patternBadge: patternInfo.badge,
-        beforeDesc: patternInfo.beforeDesc,
-        afterDesc: patternInfo.afterDesc,
-        principleDesc: patternInfo.principleDesc,
-        timestamp: new Date().toLocaleTimeString('vi-VN'),
-      };
-      
-      setResults((prev) => ({ ...prev, [key]: resultPayload }));
-      setLastTestedResult(resultPayload);
-      addLog(key.toUpperCase(), res.status, data.message || `Hoàn tất với outcome: ${data.outcome}`, elapsed);
-      checkHealth();
-    } catch (err) {
-      const elapsed = Date.now() - begin;
-      const isConnectionRefused = (!gatewayOnline && !orderOnline) || err.message.toLowerCase().includes('failed to fetch');
-      const errorObj = {
-        outcome: isConnectionRefused ? 'SERVER_OFFLINE' : 'ERROR',
-        httpStatus: isConnectionRefused ? 0 : 500,
-        message: isConnectionRefused
-          ? '❌ Không thể kết nối tới Backend (:8080 / :8082). Hãy kiểm tra xem bạn đã bấm Run cho ApiGatewayApplication hoặc OrderServiceApplication trong IntelliJ chưa!'
-          : err.message,
-        elapsedMs: elapsed,
-        key,
-        routeUsed: 'Không kết nối được',
-        patternTitle: patternInfo.title,
-        patternBadge: patternInfo.badge,
-        beforeDesc: patternInfo.beforeDesc,
-        afterDesc: patternInfo.afterDesc,
-        principleDesc: patternInfo.principleDesc,
-        timestamp: new Date().toLocaleTimeString('vi-VN'),
-      };
-      setResults((prev) => ({ ...prev, [key]: errorObj }));
-      setLastTestedResult(errorObj);
-      addLog(key.toUpperCase(), 500, errorObj.message, elapsed);
+      await work();
+    } catch (failure) {
+      setError(failure instanceof TypeError ? 'Mất kết nối với dịch vụ. Kiểm tra backend rồi thử lại.' : failure.message);
     } finally {
-      setLoading((prev) => ({ ...prev, [key]: false }));
+      if (cleanup) {
+        try {
+          await requireOk(user + '/api/chaos/reset', 'POST');
+        } catch {
+          setError((message) => [message, 'Chưa khôi phục được User Service. Hãy thử nút Đặt lại.'].filter(Boolean).join(' '));
+        }
+      }
+      running.current = false;
+      setStage('');
     }
-  };
+  }
 
-  // Test unshielded original endpoint (Before Resilience)
-  const runOriginalDemo = async (key, path, patternInfo) => {
-    setLoading((prev) => ({ ...prev, [`${key}_orig`]: true }));
-    const baseUrl = getEffectiveOrderBaseUrl();
-    const fullUrl = `${baseUrl}${path}`;
-    const begin = Date.now();
-    try {
-      const res = await fetch(fullUrl);
-      const text = await res.text();
-      const elapsed = Date.now() - begin;
-      const payload = {
-        outcome: res.ok ? 'OK (CHƯA BẢO VỆ)' : 'ERROR',
-        httpStatus: res.status,
-        message: text,
-        elapsedMs: elapsed,
-        attempts: 1,
-        key: `${key}_orig`,
-        routeUsed: baseUrl === GATEWAY_URL ? 'Qua API Gateway (:8080)' : 'Trực tiếp Order Service (:8082)',
-        patternTitle: `${patternInfo.title} [BAN ĐẦU]`,
-        patternBadge: 'BAN ĐẦU',
-        beforeDesc: patternInfo.beforeDesc,
-        afterDesc: patternInfo.afterDesc,
-        principleDesc: 'Không có TimeLimiter của Resilience4j: Request phụ thuộc hoàn toàn vào tốc độ phản hồi của User Service (bị ngâm trọn 4000ms), không thể tự ngắt sớm để cứu luồng.',
-        timestamp: new Date().toLocaleTimeString('vi-VN'),
-      };
-      setResults((prev) => ({ ...prev, [key]: payload }));
-      setLastTestedResult(payload);
-      addLog(`${key.toUpperCase()}_ORIG`, res.status, `Ban đầu: ${text}`, elapsed);
-    } catch (err) {
-      const elapsed = Date.now() - begin;
-      const errorObj = {
-        outcome: 'SERVER_OFFLINE',
-        httpStatus: 0,
-        message: '❌ Không thể kết nối tới Backend. Hãy khởi động Backend trong IntelliJ!',
-        elapsedMs: elapsed,
-        key: `${key}_orig`,
-        routeUsed: 'Không kết nối được',
-        patternTitle: `${patternInfo.title} [BAN ĐẦU]`,
-        patternBadge: 'BAN ĐẦU',
-        beforeDesc: patternInfo.beforeDesc,
-        afterDesc: patternInfo.afterDesc,
-        principleDesc: patternInfo.principleDesc,
-        timestamp: new Date().toLocaleTimeString('vi-VN'),
-      };
-      setResults((prev) => ({ ...prev, [key]: errorObj }));
-      setLastTestedResult(errorObj);
-      addLog(`${key.toUpperCase()}_ORIG`, 500, err.message, elapsed);
-    } finally {
-      setLoading((prev) => ({ ...prev, [`${key}_orig`]: false }));
-    }
-  };
+  function run() {
+    setResult(null);
+    setNeedsRecovery(false);
+    setRoute(base);
+    return perform(async () => {
+      await requireOk(user + '/api/chaos/reset', 'POST');
+      if (scenario.id === 'breaker' || scenario.id === 'fallback') {
+        const status = await requireOk(base + resilience + '/reset', 'POST');
+        setBreaker(status.circuitBreaker_demo4.state);
+      }
+      const query = { timeout: 'delayMs=4000', retry: 'failFirstN=2', bulkhead: 'delayMs=2000',
+        breaker: 'failPercent=100', fallback: 'failPercent=100' }[scenario.id];
+      await requireOk(`${user}/api/chaos?${query}`, 'POST');
+      setStage('Đang gọi Order Service…');
 
-  // Trigger burst sequence for CB
-  const burstCb = async (patternInfo) => {
-    setLoading((prev) => ({ ...prev, cbBurst: true }));
-    for (let i = 1; i <= 6; i++) {
-      await runDemo('cb', '/api/orders/resilience/circuit-breaker/1', patternInfo);
-      await new Promise((r) => setTimeout(r, 120));
-    }
-    setLoading((prev) => ({ ...prev, cbBurst: false }));
-  };
+      switch (scenario.id) {
+        case 'timeout': {
+          const feign = await callOrder(base, '/bulkhead/1');
+          setResult([feign]);
+          setStage('Đang đo TimeLimiter…');
+          const limiter = await callOrder(base, '/timeout/1');
+          setResult([feign, limiter]);
+          break;
+        }
+        case 'retry':
+          setResult(await callOrder(base, '/retry/1'));
+          break;
+        case 'bulkhead':
+          setResult(await callOrder(base, '/burst/bulkhead?n=10'));
+          break;
+        case 'breaker': {
+          const calls = [];
+          for (let index = 1; index <= 6; index += 1) {
+            setStage(`Đang gửi lượt ${index}/6…`);
+            calls.push(await callOrder(base, '/circuit-breaker/1'));
+            setResult([...calls]);
+          }
+          await readBreaker(base);
+          setNeedsRecovery(true);
+          break;
+        }
+        case 'fallback': {
+          const noFallback = await callOrder(base, '/combined/1?fallback=false');
+          setResult([noFallback]);
+          await requireOk(base + resilience + '/reset', 'POST');
+          const withFallback = await callOrder(base, '/combined/1?fallback=true');
+          setResult([noFallback, withFallback]);
+          break;
+        }
+      }
+    });
+  }
 
-  const getCbStateBadge = (state) => {
-    if (state === 'OPEN') return <span className="outcome-tag outcome-cb">🔴 OPEN (Ngắt mạch - Fail Fast)</span>;
-    if (state === 'HALF_OPEN') return <span className="outcome-tag outcome-fallback">🟡 HALF_OPEN (Đang thử nghiệm)</span>;
-    return <span className="outcome-tag outcome-ok">🟢 CLOSED (Bình thường)</span>;
-  };
+  function recover() {
+    return perform(async () => {
+      const target = route ?? base;
+      setStage('Đang chờ mạch cho phép thăm dò…');
+      let state = await readBreaker(target);
+      for (let attempt = 0; state === 'OPEN' && attempt < 12; attempt += 1) {
+        await pause(1000);
+        state = await readBreaker(target);
+      }
+      if (state === 'OPEN') throw new Error('Mạch vẫn đang mở. Hãy thử thăm dò lại.');
+      setStage('Đang gửi 2 lượt thăm dò…');
+      const calls = result.slice(0, 6);
+      for (let index = 0; index < 2; index += 1) {
+        calls.push(await callOrder(target, '/circuit-breaker/1'));
+        setResult([...calls]);
+      }
+      await readBreaker(target);
+      setNeedsRecovery(false);
+    });
+  }
 
-  // Pattern metadata
-  const patternDefs = {
-    timeout: {
-      badge: 'Pattern 1',
-      title: 'TimeLimiter (Timeout 1.5s)',
-      beforeDesc: 'Ban đầu (Khi KHÔNG CÓ TimeLimiter): Thread của Order Service bị treo cứng 4 giây để chờ User Service. Khi hàng trăm khách cùng vào, thread pool cạn kiệt, server sập dây chuyền (Cascading Failure).',
-      afterDesc: 'Sau đó (Khi CÓ TimeLimiter 1.5s): TimeLimiter đếm độc lập và cắt đứt chính xác sau 1500ms, trả về HTTP 504 TIMEOUT. Luồng được giải phóng ngay lập tức để phục vụ khách khác.',
-      principleDesc: 'TimeLimiter bao bọc cuộc gọi CompletionStage/Future. Nếu tác vụ không hoàn thành trước thời hạn 1500ms, nó chủ động hủy chờ và trả về mã lỗi 504 Gateway Timeout.',
-    },
-    retry: {
-      badge: 'Pattern 2',
-      title: 'Resilience4j Retry (Tối đa 3 lần)',
-      beforeDesc: 'Ban đầu (Khi KHÔNG CÓ Retry): Sự cố chớp tắt (transient fault) dù chỉ diễn ra trong 100ms cũng khiến khách hàng bị ném lỗi HTTP 500 vào mặt ngay lần đầu tiên.',
-      afterDesc: 'Sau đó (Khi CÓ Retry 3 lần): Tự động thử lại lần 2, lần 3 (chờ 500ms, 1000ms), tự vượt qua lỗi và trả về HTTP 200 OK mượt mà, khách hàng không hề hay biết có sự cố.',
-      principleDesc: 'Cơ chế Exponential Backoff: Lần 1 fail -> chờ 500ms; lần 2 fail -> nhân đôi chờ 1000ms rồi gọi lại. Điều này giúp tránh hiện tượng "Retry Storm" làm sập vĩnh viễn server.',
-    },
-    bulkhead: {
-      badge: 'Pattern 3',
-      title: 'Bulkhead (Vách ngăn cách ly - 3 slot)',
-      beforeDesc: 'Ban đầu (Khi KHÔNG CÓ Bulkhead): 10-30 request ồ ạt ùa vào chiếm sạch toàn bộ worker thread của Order Service, làm các API khác (giỏ hàng, thanh toán) chết chùm theo.',
-      afterDesc: 'Sau đó (Khi CÓ Bulkhead 3 slot): Cấp đúng 3 slot cho 3 request, 7 request quá tải bị từ chối NGAY LẬP TỨC trong 2ms với HTTP 429 BULKHEAD_FULL (fail-fast an toàn).',
-      principleDesc: 'Sử dụng SemaphoreBulkhead giới hạn số cuộc gọi đồng thời. Khi số cuộc gọi chạm trần (3 slot), các request đến sau bị từ chối ngay tức thì mà không phải xếp hàng chờ đợi.',
-    },
-    cb: {
-      badge: 'Pattern 4',
-      title: 'Circuit Breaker (Cầu dao ngắt mạch tự động)',
-      beforeDesc: 'Ban đầu (Khi KHÔNG CÓ Circuit Breaker): Downstream đã chết hẳn nhưng Order Service vẫn tiếp tục dồn dập gửi request sang, gây lãng phí tài nguyên và làm downstream không thể ngóc đầu dậy.',
-      afterDesc: 'Sau đó (Khi CÓ Circuit Breaker): Khi tỷ lệ lỗi >= 50% trong 5 lần gọi gần nhất, Cầu dao tự nhảy OPEN, chặn đứng mọi cuộc gọi trong 0ms với HTTP 503 Fail-Fast để downstream hồi sức.',
-      principleDesc: 'Theo dõi cửa sổ trượt (sliding window 5 mẫu). Khi tỷ lệ lỗi vượt ngưỡng, chuyển sang OPEN. Sau 10s chuyển HALF_OPEN thử nghiệm 2 request: nếu phục hồi thì đóng lại CLOSED (tự lành bệnh).',
-    },
-    combined: {
-      badge: 'Pattern 5: Hoàn chỉnh',
-      title: 'Combined 4 Pattern + Fallback Dự Phòng',
-      beforeDesc: 'Ban đầu (Khi KHÔNG CÓ Fallback): Bất kể khi nào downstream sập, khách hàng đều nhận màn hình lỗi trắng xóa (HTTP 500/503), trải nghiệm mua sắm bị đứt đoạn.',
-      afterDesc: 'Sau đó (Khi CÓ Fallback): Bất kể lỗi mạng, timeout hay sập nguồn, hệ thống tự động trả về dữ liệu an toàn "Khách (dự phòng)" với HTTP 200 OK, người dùng vẫn tiếp tục sử dụng app bình thường.',
-      principleDesc: 'Trình tự lồng nhau: Retry -> CircuitBreaker -> TimeLimiter -> Bulkhead -> Feign. Nếu bất kỳ mắt xích nào ném ngoại lệ, hàm Fallback lập tức can thiệp và trả về object dự phòng mềm dẻo.',
-    },
-  };
-
-  const isAllServicesOnline = gatewayOnline && orderOnline && userOnline;
-
-  // Component hiển thị kết quả ngay dưới nút bấm trong từng Card
-  const renderCardResultPanel = (key, res) => {
-    if (!res) return null;
-    return (
-      <div className="card-result-panel">
-        <div className="panel-header-row">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontWeight: 800, color: '#fff' }}>KẾT QUẢ ĐO ĐẠC:</span>
-            <span className={`outcome-tag ${
-              res.outcome === 'OK' || res.outcome === 'OK (CHƯA BẢO VỆ)' ? 'outcome-ok' :
-              res.outcome === 'TIMEOUT' ? 'outcome-timeout' :
-              res.outcome === 'BULKHEAD_FULL' ? 'outcome-bulkhead' :
-              res.outcome === 'CIRCUIT_OPEN' ? 'outcome-cb' :
-              res.outcome === 'FALLBACK' ? 'outcome-fallback' : 'outcome-cb'
-            }`}>
-              {res.outcome} (HTTP {res.httpStatus})
-            </span>
-          </div>
-          <span style={{ fontSize: '11px', color: '#94a3b8' }}>{res.timestamp}</span>
-        </div>
-
-        <div className="panel-metrics-row">
-          <div className="panel-metric-item">
-            Thời gian: <strong>{res.elapsedMs || res.totalMs || 0} ms</strong>
-          </div>
-          <div className="panel-metric-item">
-            Số lần gọi: <strong>{res.attempts || (res.parallelRequests ? `${res.parallelRequests} luồng` : '1')} lần</strong>
-          </div>
-          {res.routeUsed && (
-            <div className="panel-metric-item">
-              Đường truyền: <strong style={{ color: '#38bdf8' }}>{res.routeUsed}</strong>
-            </div>
-          )}
-        </div>
-
-        {/* 2 Cột: Trước nó như thế nào vs Sau đó ra sao */}
-        <div className="panel-compare-grid">
-          <div className="panel-box-before">
-            <div style={{ fontWeight: 800, marginBottom: '4px' }}>🔴 1. TRƯỚC ĐÓ (Không bảo vệ):</div>
-            <div>{res.beforeDesc}</div>
-          </div>
-          <div className="panel-box-after">
-            <div style={{ fontWeight: 800, marginBottom: '4px' }}>🟢 2. SAU ĐÓ (Có bảo vệ):</div>
-            <div>{res.afterDesc}</div>
-          </div>
-        </div>
-
-        {/* Nguyên lý hoạt động */}
-        <div className="panel-principle-text">
-          <div style={{ fontWeight: 800, color: '#a5b4fc', marginBottom: '2px' }}>💡 NGUYÊN LÝ HOẠT ĐỘNG:</div>
-          <div>{res.principleDesc || res.message}</div>
-          {res.user && (
-            <div style={{ marginTop: '6px', paddingTop: '6px', borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
-              📦 Dữ liệu trả về: ID: <code>{res.user.id}</code> | Tên: <code>{res.user.name}</code> | Địa chỉ: <code>{res.user.address}</code>
-              {res.fallback && <span className="fallback-chip">Dữ liệu dự phòng (Fallback)</span>}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  };
+  function reset() {
+    return perform(async () => {
+      await requireOk(user + '/api/chaos/reset', 'POST');
+      const status = await requireOk(base + resilience + '/reset', 'POST');
+      setBreaker(status.circuitBreaker_demo4.state);
+      setResult(null);
+      setNeedsRecovery(false);
+      setRoute(null);
+    }, false);
+  }
 
   return (
-    <div className="app-container">
-      {/* Header */}
-      <header className="header">
-        <div className="brand">
-          <div className="logo-badge">
-            <ShieldCheck size={26} color="#fff" />
-          </div>
-          <div>
-            <h1>Nexus Resilience Studio</h1>
-            <p>Hệ sinh thái Microservices Chịu Lỗi Cao (Resilience4j + OpenFeign + API Gateway)</p>
-          </div>
-        </div>
-
-        <div className="health-status-bar">
-          <div className="status-pill">
-            <span className={`dot ${gatewayOnline ? 'online' : 'offline'}`} />
-            Gateway :8080
-          </div>
-          <div className="status-pill">
-            <span className={`dot ${orderOnline ? 'online' : 'offline'}`} />
-            Order Service :8082
-          </div>
-          <div className="status-pill">
-            <span className={`dot ${userOnline ? 'online' : 'offline'}`} />
-            User Service :8081
-          </div>
-          <a href="http://localhost:8082/swagger-ui/index.html" target="_blank" rel="noreferrer" className="swagger-link">
-            Swagger Order <ExternalLink size={12} />
-          </a>
-          <a href="http://localhost:8081/swagger-ui/index.html" target="_blank" rel="noreferrer" className="swagger-link">
-            Swagger User <ExternalLink size={12} />
-          </a>
+    <div className="app-shell">
+      <header className="topbar">
+        <div className="brand"><span className="brand-icon"><Package size={22} /></span><div>Điều phối đơn hàng<small>Phòng demo microservices</small></div></div>
+        <div className="top-actions">
+          <span className={`service-badge ${ready ? 'online' : ''}`} title={services?.gateway ? 'Qua API Gateway' : 'Gọi trực tiếp Order Service'}>
+            <i />{!services ? 'Đang kiểm tra' : ready ? services.gateway ? 'Backend đã kết nối' : 'Đã kết nối trực tiếp' : 'Backend chưa sẵn sàng'}
+          </span>
+          <button className="reset" disabled={busy || !ready} onClick={reset}><RotateCcw size={15} /> Đặt lại</button>
         </div>
       </header>
 
-      {/* Warning banner when any service is offline */}
-      {!isAllServicesOnline && (
-        <div style={{
-          background: 'rgba(239, 68, 68, 0.15)',
-          border: '1px solid rgba(239, 68, 68, 0.4)',
-          borderRadius: '12px',
-          padding: '14px 18px',
-          marginBottom: '20px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '12px',
-          color: '#fca5a5',
-        }}>
-          <AlertOctagon size={24} color="#ef4444" style={{ flexShrink: 0 }} />
-          <div>
-            <strong>THÔNG BÁO KẾT NỐI:</strong>
-            <div style={{ fontSize: '13px', marginTop: '2px', color: '#cbd5e1' }}>
-              Trạng thái hiện tại: Gateway :8080 ({gatewayOnline ? '🟢 Đang chạy' : '🔴 Chưa kết nối'}), Order Service :8082 ({orderOnline ? '🟢 Đang chạy' : '🔴 Tắt'}), User Service :8081 ({userOnline ? '🟢 Đang chạy' : '🔴 Tắt'}).
-              {!gatewayOnline && orderOnline && (
-                <div style={{ color: '#38bdf8', marginTop: '4px' }}>
-                  ℹ️ <em>Hệ thống đang tự động chuyển hướng gọi thẳng vào <strong>Order Service :8082</strong> để bạn vẫn có thể kiểm thử mượt mà mà không bị chặn!</em>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      <main className="workspace">
+        <section className="intro">
+          <div><div className="eyebrow"><Activity size={15} /> MÔ PHỎNG SỰ CỐ</div><h1>Đơn hàng khi dịch vụ gặp lỗi</h1><p>Order Service cần lấy thông tin khách hàng để hiển thị đơn hàng.</p></div>
+          <div className="order-chip"><Package size={19} /><div><strong>Đơn hàng #001</strong><small>Tra cứu khách hàng</small></div></div>
+        </section>
 
-      {/* Architecture Pipeline Bar */}
-      <div className="pipeline-bar">
-        <div className="pipeline-node active">
-          <Server size={16} color="#6366f1" />
-          <div>
-            <div className="node-title">1. Client / UI</div>
-            <div className="node-sub">React :3000</div>
-          </div>
-        </div>
-        <div className="pipeline-arrow"><ArrowRight size={16} /></div>
-        <div className={`pipeline-node ${gatewayOnline ? 'active' : ''}`}>
-          <Layers size={16} color="#06b6d4" />
-          <div>
-            <div className="node-title">2. API Gateway</div>
-            <div className="node-sub">Port :8080 (WebFlux)</div>
-          </div>
-        </div>
-        <div className="pipeline-arrow"><ArrowRight size={16} /></div>
-        <div className={`pipeline-node ${orderOnline ? 'active' : ''}`}>
-          <ShieldAlert size={16} color="#f59e0b" />
-          <div>
-            <div className="node-title">3. Order Service</div>
-            <div className="node-sub">Retry ➔ CB ➔ Timeout ➔ Bulkhead (:8082)</div>
-          </div>
-        </div>
-        <div className="pipeline-arrow"><ArrowRight size={16} /></div>
-        <div className={`pipeline-node ${userOnline ? 'active' : ''}`}>
-          <Flame size={16} color="#ef4444" />
-          <div>
-            <div className="node-title">4. User Service</div>
-            <div className="node-sub">Downstream + Chaos (:8081)</div>
-          </div>
-        </div>
-      </div>
-
-      {/* ========================================================================= */}
-      {/* 📚 CẨM NANG CHO NGƯỜI MỚI: MỐI LIÊN HỆ GIỮA CHAOS & 5 PATTERN BÊN DƯỚI   */}
-      {/* ========================================================================= */}
-      <section className="chaos-guide-banner">
-        <div className="guide-banner-header">
-          <BookOpen size={20} color="#818cf8" />
-          <span>DÀNH CHO NGƯỜI MỚI: VAI TRÒ CỦA "CHAOS" VÀ MỐI LIÊN HỆ VỚI 5 PATTERN Ở DƯỚI</span>
-        </div>
-        <div className="guide-banner-intro">
-          <strong>❓ "Áp dụng Chaos" có tác dụng gì?</strong> Hãy tưởng tượng bạn muốn kiểm tra xem <strong>áo giáp (Resilience)</strong> có chống đạn được không, trước tiên bạn phải <strong>bắn đạn (Tạo sự cố Chaos)</strong> vào hệ thống.
-          <br />
-          User Service là dịch vụ phụ trợ phía sau. <strong>Chaos Center chính là công tắc tạo sự cố giả lập</strong> lên User Service để kiểm tra xem tầng bảo vệ của Order Service phát huy tác dụng ra sao:
-        </div>
-
-        <div className="guide-steps-grid">
-          <div className="guide-step-card">
-            <div className="guide-step-title text-danger">
-              ⏱️ 1. Giả lập Chậm 4s (Timeout)
-            </div>
-            <div style={{ color: '#cbd5e1' }}>
-              Bắt User Service bị đơ 4s ➔ Dành riêng để test <strong>Pattern 1 (TimeLimiter)</strong> xem nó có cắt đứt sau 1.5s hay không.
-            </div>
-          </div>
-
-          <div className="guide-step-card">
-            <div className="guide-step-title" style={{ color: '#facc15' }}>
-              ⚡ 2. Giả lập Lỗi 2 lần đầu (Retry)
-            </div>
-            <div style={{ color: '#cbd5e1' }}>
-              Bắt User Service chập chờn 2 lần đầu ➔ Dành riêng để test <strong>Pattern 2 (Retry)</strong> xem nó có tự gọi lại 3 lần để tự cứu không.
-            </div>
-          </div>
-
-          <div className="guide-step-card">
-            <div className="guide-step-title" style={{ color: '#c084fc' }}>
-              🧱 3. Giả lập Quá tải 10 Request
-            </div>
-            <div style={{ color: '#cbd5e1' }}>
-              Bắn 10 request song song ➔ Dành riêng để test <strong>Pattern 3 (Bulkhead)</strong> xem nó có cấp 3 slot và từ chối 7 request quá tải (429) không.
-            </div>
-          </div>
-
-          <div className="guide-step-card">
-            <div className="guide-step-title text-danger">
-              💥 4. Giả lập Sập 100% (CB & Fallback)
-            </div>
-            <div style={{ color: '#cbd5e1' }}>
-              Bắt User Service chết hẳn ➔ Dành để test <strong>Pattern 4 (Cầu dao ngắt 0ms)</strong> và <strong>Pattern 5 (Trả khách dự phòng Fallback)</strong>.
-            </div>
-          </div>
-        </div>
-
-        <div style={{ marginTop: '12px', fontSize: '12.5px', color: '#38bdf8', fontWeight: 600 }}>
-          💡 <strong>QUY TRÌNH KIỂM THỬ ĐƠN GIẢN:</strong> Bước 1 (Gây sự cố ở Chaos Center) ➔ Bước 2 (Kéo xuống đúng Pattern tương ứng bên dưới và bấm nút Test để chứng kiến kết quả)!
-        </div>
-      </section>
-
-      {/* ========================================================================= */}
-      {/* 💥 CHAOS CONTROL CENTER & THANH HIỂN THỊ KẾT QUẢ ÁP DỤNG NGAY DƯỚI NÚT */}
-      {/* ========================================================================= */}
-      <section className="chaos-card">
-        <div className="chaos-header">
-          <div className="chaos-title">
-            <Flame size={20} color="#f87171" />
-            <span>Chaos Injection Center (Điều khiển sự cố trên User Service :8081)</span>
-          </div>
-          <div className="presets-row">
-            <span style={{ fontSize: '12px', color: '#94a3b8', marginRight: '6px' }}>Kịch bản mẫu 1-Click:</span>
-            <button className="preset-btn reset" onClick={resetChaos}>🟢 0. Reset bình thường</button>
-            <button className="preset-btn timeout" onClick={() => applyChaos(4000, 0, 0, '⏱️ Chậm 4s (Dành cho Pattern 1 - Timeout)')}>⏱️ 1. Chậm 4s (Dành cho Pattern 1)</button>
-            <button className="preset-btn retry" onClick={() => applyChaos(0, 0, 2, '⚡ Lỗi 2 lần đầu (Dành cho Pattern 2 - Retry)')}>⚡ 2. Lỗi 2 lần đầu (Dành cho Pattern 2)</button>
-            <button className="preset-btn crash" onClick={() => applyChaos(0, 100, 0, '💥 Sập 100% (Dành cho Pattern 4 & 5)')}>💥 3. Sập 100% (Dành cho Pattern 4 & 5)</button>
-          </div>
-        </div>
-
-        <div className="chaos-controls">
-          <div className="control-group">
-            <label>
-              <span>Độ trễ phản hồi (delayMs)</span>
-              <span style={{ color: '#38bdf8' }}>{delayInput} ms</span>
-            </label>
-            <input
-              type="number"
-              min="0"
-              max="10000"
-              step="500"
-              value={delayInput}
-              onChange={(e) => setDelayInput(Number(e.target.value))}
-            />
-          </div>
-
-          <div className="control-group">
-            <label>
-              <span>Tỷ lệ lỗi HTTP 500 (failPercent)</span>
-              <span style={{ color: '#f87171' }}>{failPercentInput} %</span>
-            </label>
-            <input
-              type="number"
-              min="0"
-              max="100"
-              step="10"
-              value={failPercentInput}
-              onChange={(e) => setFailPercentInput(Number(e.target.value))}
-            />
-          </div>
-
-          <div className="control-group">
-            <label>
-              <span>Lỗi N lần đầu rồi tự hồi (failFirstN)</span>
-              <span style={{ color: '#fbbf24' }}>{failFirstNInput} lần</span>
-            </label>
-            <input
-              type="number"
-              min="0"
-              max="10"
-              value={failFirstNInput}
-              onChange={(e) => setFailFirstNInput(Number(e.target.value))}
-            />
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'flex-end' }}>
-            <button
-              className="action-btn"
-              onClick={() => applyChaos(delayInput, failPercentInput, failFirstNInput, 'Tùy chỉnh thông số Chaos')}
-              style={{ height: '42px' }}
-            >
-              Áp dụng Chaos
-            </button>
-          </div>
-        </div>
-
-        <div style={{ fontSize: '12px', color: '#cbd5e1', display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
-          <span>Trạng thái hiện tại: <strong>delay = {chaos.delayMs}ms</strong></span>
-          <span>Lỗi 500 = <strong>{chaos.failPercent}%</strong></span>
-          <span>Lỗi còn lại = <strong>{chaos.failFirstNLeft}</strong></span>
-          <span>Tổng số lượt gọi đến User Service = <strong>{chaos.totalCalls}</strong></span>
-        </div>
-
-        {/* 🌟 BẢNG CHI TIẾT HIỆN NGAY DƯỚI NÚT ÁP DỤNG THEO YÊU CẦU CỦA BẠN 🌟 */}
-        {lastChaosApplied && (
-          <div className="chaos-applied-card">
-            <div className="chaos-applied-header">
-              <div className="chaos-applied-title">
-                <Sparkles size={16} />
-                <span>KẾT QUẢ ÁP DỤNG: {lastChaosApplied.name}</span>
-              </div>
-              <span style={{ fontSize: '11px', color: '#94a3b8' }}>Thời điểm áp dụng: {lastChaosApplied.timestamp}</span>
-            </div>
-
-            <div className="chaos-diff-grid">
-              <div className="chaos-diff-box chaos-diff-before">
-                <div className="diff-title text-danger">
-                  <XCircle size={14} /> 1. TRƯỚC KHI ÁP DỤNG:
-                </div>
-                <div className="diff-content">
-                  • Độ trễ (delayMs): <strong>{lastChaosApplied.before.delayMs} ms</strong><br />
-                  • Tỷ lệ lỗi 500: <strong>{lastChaosApplied.before.failPercent}%</strong><br />
-                  • Lỗi N lần đầu: <strong>{lastChaosApplied.before.failFirstNLeft} lần</strong>
-                </div>
-              </div>
-
-              <div className="chaos-diff-box chaos-diff-after">
-                <div className="diff-title text-success">
-                  <CheckCircle2 size={14} /> 2. SAU KHI ÁP DỤNG (ĐÃ NẠP VÀO USER SERVICE):
-                </div>
-                <div className="diff-content">
-                  • Độ trễ (delayMs): <strong>{lastChaosApplied.after.delayMs} ms</strong><br />
-                  • Tỷ lệ lỗi 500: <strong>{lastChaosApplied.after.failPercent}%</strong><br />
-                  • Lỗi N lần đầu: <strong>{lastChaosApplied.after.failFirstNLeft} lần</strong>
-                </div>
-              </div>
-            </div>
-
-            <div className="chaos-principle-box">
-              <div style={{ fontWeight: 800, color: '#38bdf8', marginBottom: '4px' }}>💡 NGUYÊN LÝ HOẠT ĐỘNG & MỤC ĐÍCH:</div>
-              <div>{lastChaosApplied.principle}</div>
-              <div style={{ marginTop: '6px', color: '#facc15', fontWeight: 600 }}>
-                👉 {lastChaosApplied.testHint}
-              </div>
-            </div>
-          </div>
-        )}
-      </section>
-
-      {/* Resilience Patterns Matrix */}
-      <div className="patterns-grid">
-        {/* Pattern 1: Timeout */}
-        <div className="pattern-card">
-          <div className="card-top">
-            <div className="card-badge badge-timeout">Pattern 1</div>
-            <h3>TimeLimiter (Timeout 1.5s)</h3>
-            <div className="endpoint-tag">GET /api/orders/resilience/timeout/1</div>
-            
-            {/* Mục so sánh ban đầu vs sau đó */}
-            <div className="mini-comparison">
-              <div className="mini-before">
-                <span className="tag-sm danger">Ban đầu:</span> Server bị treo 4 giây, cạn kiệt luồng nếu User Service bị đơ.
-              </div>
-              <div className="mini-after">
-                <span className="tag-sm success">Sau đó:</span> TimeLimiter cắt đứt sau 1.5s, trả mã 504 TIMEOUT giải phóng luồng ngay.
-              </div>
-            </div>
-
-            {/* Bước 1: Chuẩn bị sự cố */}
-            <div className="card-step-label">1️⃣ Bước 1: Nạp sự cố cho Pattern 1</div>
-            <button
-              className="preset-btn timeout"
-              style={{ fontSize: '11px', padding: '6px 10px', width: '100%', marginBottom: '10px' }}
-              onClick={() => applyChaos(4000, 0, 0, '⏱️ Chậm 4s cho TimeLimiter')}
-            >
-              ⏱️ 1-Click: Gây trễ 4s trên User Service
-            </button>
-          </div>
-
-          <div>
-            <div className="card-step-label">2️⃣ Bước 2: Bấm Test đối chứng</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
-              <button
-                className="action-btn btn-secondary"
-                disabled={loading.timeout_orig}
-                onClick={() => runOriginalDemo('timeout', '/api/orders/1', patternDefs.timeout)}
-                title="Gọi endpoint gốc không có TimeLimiter (mất trọn 4 giây)"
-                style={{ fontSize: '12px', padding: '8px 6px' }}
-              >
-                {loading.timeout_orig ? 'Đang đợi 4s...' : '🔴 Test Gốc (Chờ 4s)'}
+        <div className="layout">
+          <aside className="sidebar">
+            <div className="section-label">KỊCH BẢN</div>
+            <nav aria-label="Kịch bản demo">{scenarios.map((item, index) => (
+              <button key={item.id} className={index === selected ? 'scenario active' : 'scenario'} aria-current={index === selected ? 'true' : undefined} disabled={busy} onClick={() => { if (index !== selected) select(index); }}>
+                <span className="scenario-icon"><item.icon size={19} /></span>
+                <span><strong>{item.name}</strong><small>{item.label}</small></span>
+                <ChevronRight className="chevron" size={16} />
               </button>
-              <button
-                className="action-btn"
-                disabled={loading.timeout}
-                onClick={() => runDemo('timeout', '/api/orders/resilience/timeout/1', patternDefs.timeout)}
-                style={{ fontSize: '12px', padding: '8px 6px' }}
-              >
-                {loading.timeout ? 'Đang ngắt 1.5s...' : '🟢 Test Sau Đó (Cắt 1.5s)'}
-              </button>
+            ))}</nav>
+            <details className="connection"><summary><CircleHelp size={15} /> Kết nối dịch vụ</summary>
+              {Object.entries({ 'API Gateway · 8080': services?.gateway, 'Order Service · 8082': services?.order, 'User Service · 8081': services?.user }).map(([name, online]) => <div key={name}><span>{name}</span><b>{online == null ? 'Đang kiểm tra' : online ? 'Đã kết nối' : 'Ngoại tuyến'}</b></div>)}
+            </details>
+          </aside>
+
+          <section className="stage">
+            <div className="stage-header">
+              <div className="stage-meta"><span className="chapter">KỊCH BẢN {String(selected + 1).padStart(2, '0')}</span><span className="condition"><i />{scenario.condition}</span></div>
+              <h2>{scenario.title}</h2><p>{scenario.detail}</p>
+              <div className="flow"><span><Package size={16} /> Order Service</span><ArrowRight size={17} aria-hidden="true" /><span className="flow-guard"><scenario.icon size={16} /> {scenario.name}</span><ArrowRight size={17} aria-hidden="true" /><span><UserRound size={16} /> User Service</span></div>
+              <div className="controls">
+                <button className="primary" disabled={busy || !ready} onClick={run}>{busy ? <LoaderCircle className="spinner" size={17} /> : <Play size={17} />}{stage || scenario.action}</button>
+                {needsRecovery && <button className="reset" disabled={busy || !ready} onClick={recover}>Gửi lượt thăm dò</button>}
+              </div>
+              {services && !ready && <p className="notice">Khởi động Order Service và User Service để chạy demo.</p>}
+              {error && <p className="error" role="alert">{error}</p>}
             </div>
 
-            {/* HIỂN THỊ KẾT QUẢ NGAY DƯỚI NÚT BẤM CỦA CARD */}
-            {renderCardResultPanel('timeout', results.timeout)}
-          </div>
+            <div className="stage-results">
+              <div className="result-heading"><div><div className="section-label">KẾT QUẢ</div><h3>{scenario.question}</h3></div>{route && <span className="route">{route === gateway ? 'Qua Gateway' : 'Gọi trực tiếp'}</span>}</div>
+              <div aria-live="polite" aria-busy={busy}>
+                {result ? <Results id={scenario.id} result={result} breaker={breaker} /> : <div className="empty"><Activity size={20} />{busy ? 'Đang chờ phản hồi…' : 'Chạy kịch bản để xem kết quả.'}</div>}
+              </div>
+              {needsRecovery && <p className="note">User Service đã được khôi phục. Gửi lượt thăm dò để kiểm tra mạch đóng lại.</p>}
+              {result && <details className="raw"><summary>Xem phản hồi API</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>}
+            </div>
+          </section>
         </div>
-
-        {/* Pattern 2: Retry */}
-        <div className="pattern-card">
-          <div className="card-top">
-            <div className="card-badge badge-retry">Pattern 2</div>
-            <h3>Resilience4j Retry (Tối đa 3 lần)</h3>
-            <div className="endpoint-tag">GET /api/orders/resilience/retry/1</div>
-
-            {/* Mục so sánh ban đầu vs sau đó */}
-            <div className="mini-comparison">
-              <div className="mini-before">
-                <span className="tag-sm danger">Ban đầu:</span> Gặp lỗi chớp tắt 500 là văng lỗi cho khách hàng ngay lập tức ở lần đầu.
-              </div>
-              <div className="mini-after">
-                <span className="tag-sm success">Sau đó:</span> Tự động thử lại 3 lần (chờ 500ms, 1000ms), tự cứu ở lần 3 trả 200 OK.
-              </div>
-            </div>
-
-            {/* Bước 1: Chuẩn bị sự cố */}
-            <div className="card-step-label">1️⃣ Bước 1: Nạp sự cố cho Pattern 2</div>
-            <button
-              className="preset-btn retry"
-              style={{ fontSize: '11px', padding: '6px 10px', width: '100%', marginBottom: '10px' }}
-              onClick={() => applyChaos(0, 0, 2, '⚡ Lỗi 2 lần đầu cho Retry')}
-            >
-              ⚡ 1-Click: Gây lỗi 2 lần đầu rồi tự hồi
-            </button>
-          </div>
-
-          <div>
-            <div className="card-step-label">2️⃣ Bước 2: Bấm Test thử lại</div>
-            <button
-              className="action-btn"
-              disabled={loading.retry}
-              onClick={() => runDemo('retry', '/api/orders/resilience/retry/1', patternDefs.retry)}
-            >
-              {loading.retry ? 'Đang tự động thử lại 3 lần...' : '▶ Bấm Test Retry (Tự cứu ở lần 3)'}
-            </button>
-
-            {/* HIỂN THỊ KẾT QUẢ NGAY DƯỚI NÚT BẤM CỦA CARD */}
-            {renderCardResultPanel('retry', results.retry)}
-          </div>
-        </div>
-
-        {/* Pattern 3: Bulkhead */}
-        <div className="pattern-card">
-          <div className="card-top">
-            <div className="card-badge badge-bulkhead">Pattern 3</div>
-            <h3>Bulkhead (Vách ngăn cách ly - 3 slot)</h3>
-            <div className="endpoint-tag">GET /api/orders/resilience/burst/bulkhead?n={burstCount}</div>
-
-            {/* Mục so sánh ban đầu vs sau đó */}
-            <div className="mini-comparison">
-              <div className="mini-before">
-                <span className="tag-sm danger">Ban đầu:</span> 10 request cùng ập vào chiếm trọn thread pool, làm sập các API khác.
-              </div>
-              <div className="mini-after">
-                <span className="tag-sm success">Sau đó:</span> Cấp đúng 3 slot cho 3 request, 7 request quá tải bị từ chối trong 2ms với 429.
-              </div>
-            </div>
-
-            <div className="card-step-label">1️⃣ Bước 1: Chọn số lượng request song song</div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', margin: '4px 0 10px' }}>
-              <span style={{ fontSize: '12px', color: '#94a3b8' }}>Số request bắn cùng lúc:</span>
-              <input
-                type="number"
-                min="1"
-                max="30"
-                value={burstCount}
-                onChange={(e) => setBurstCount(Number(e.target.value))}
-                style={{ width: '60px', padding: '4px 8px', background: '#121826', color: '#fff', border: '1px solid #334155', borderRadius: '6px' }}
-              />
-            </div>
-          </div>
-
-          <div>
-            <div className="card-step-label">2️⃣ Bước 2: Bắn đồng thời</div>
-            <button
-              className="action-btn"
-              disabled={loading.bulkhead}
-              onClick={() => runDemo('bulkhead', `/api/orders/resilience/burst/bulkhead?n=${burstCount}`, patternDefs.bulkhead)}
-            >
-              {loading.bulkhead ? 'Đang bắn burst...' : `▶ Bắn ${burstCount} Request song song`}
-            </button>
-
-            {/* HIỂN THỊ KẾT QUẢ NGAY DƯỚI NÚT BẤM CỦA CARD */}
-            {renderCardResultPanel('bulkhead', results.bulkhead)}
-          </div>
-        </div>
-
-        {/* Pattern 4: Circuit Breaker */}
-        <div className="pattern-card">
-          <div className="card-top">
-            <div className="card-badge badge-cb">Pattern 4</div>
-            <h3>Circuit Breaker (Ngắt mạch tự động)</h3>
-            <div className="endpoint-tag">GET /api/orders/resilience/circuit-breaker/1</div>
-
-            {/* Mục so sánh ban đầu vs sau đó */}
-            <div className="mini-comparison">
-              <div className="mini-before">
-                <span className="tag-sm danger">Ban đầu:</span> Downstream sập nhưng vẫn nã request liên tục làm server kiệt quệ không thể phục hồi.
-              </div>
-              <div className="mini-after">
-                <span className="tag-sm success">Sau đó:</span> Lỗi ≥ 50% trong 5 lần gọi ➔ Ngắt mạch OPEN, fail-fast trong 0ms với mã 503.
-              </div>
-            </div>
-
-            {/* Bước 1: Chuẩn bị sự cố */}
-            <div className="card-step-label">1️⃣ Bước 1: Nạp sự cố sập cho Pattern 4</div>
-            <button
-              className="preset-btn crash"
-              style={{ fontSize: '11px', padding: '6px 10px', width: '100%', marginBottom: '10px' }}
-              onClick={() => applyChaos(0, 100, 0, '💥 Sập 100% cho Circuit Breaker')}
-            >
-              💥 1-Click: Gây sập 100% User Service
-            </button>
-
-            <div style={{ margin: '4px 0 8px' }}>
-              Trạng thái Cầu Dao: {getCbStateBadge(cbMetrics?.circuitBreaker_demo4?.state || 'CLOSED')}
-            </div>
-            {cbMetrics?.circuitBreaker_demo4 && (
-              <div style={{ fontSize: '11px', color: '#94a3b8', display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '8px' }}>
-                <span>Tỷ lệ lỗi: <strong>{cbMetrics.circuitBreaker_demo4.failureRatePercent >= 0 ? `${cbMetrics.circuitBreaker_demo4.failureRatePercent}%` : 'Chưa đủ mẫu'}</strong></span>
-                <span>Số cuộc gọi đệm: <strong>{cbMetrics.circuitBreaker_demo4.bufferedCalls}/5</strong></span>
-              </div>
-            )}
-          </div>
-
-          <div>
-            <div className="card-step-label">2️⃣ Bước 2: Bấm gọi để kiểm tra Cầu Dao</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
-              <button
-                className="action-btn"
-                disabled={loading.cb}
-                onClick={() => runDemo('cb', '/api/orders/resilience/circuit-breaker/1', patternDefs.cb)}
-              >
-                Gửi 1 Request
-              </button>
-              <button
-                className="action-btn btn-secondary"
-                disabled={loading.cbBurst}
-                onClick={() => burstCb(patternDefs.cb)}
-              >
-                {loading.cbBurst ? 'Đang bắn 6 lần...' : '▶ Bắn 6 Lần (OPEN)'}
-              </button>
-            </div>
-            <button
-              className="action-btn btn-secondary"
-              onClick={resetCircuitBreaker}
-              style={{ fontSize: '12px', padding: '6px' }}
-            >
-              🔄 Reset Circuit Breaker (CLOSED)
-            </button>
-
-            {/* HIỂN THỊ KẾT QUẢ NGAY DƯỚI NÚT BẤM CỦA CARD */}
-            {renderCardResultPanel('cb', results.cb)}
-          </div>
-        </div>
-
-        {/* Pattern 5: Combined + Fallback */}
-        <div className="pattern-card" style={{ gridColumn: '1 / -1' }}>
-          <div className="card-top">
-            <div className="card-badge badge-combined">Pattern 5: Hoàn chỉnh</div>
-            <h3>Kết hợp 4 Pattern + Dữ liệu dự phòng (Fallback)</h3>
-            <p>Trình tự lồng nhau: <strong>Retry( CircuitBreaker( TimeLimiter( ThreadPoolBulkhead( Feign ) ) ) )</strong>.</p>
-            
-            {/* Mục so sánh ban đầu vs sau đó */}
-            <div className="mini-comparison" style={{ gridTemplateColumns: '1fr 1fr', display: 'grid', gap: '12px', margin: '12px 0' }}>
-              <div className="mini-before" style={{ padding: '10px' }}>
-                <span className="tag-sm danger">Ban đầu (Không có Fallback):</span> Khi downstream sập, khách hàng nhận trang lỗi 500/503 trắng xóa, trải nghiệm bị gián đoạn hoàn toàn.
-              </div>
-              <div className="mini-after" style={{ padding: '10px' }}>
-                <span className="tag-sm success">Sau đó (Có Fallback):</span> Bất kể lỗi mạng, timeout hay sập server, hệ thống luôn trả về dữ liệu an toàn "Khách (dự phòng)" với HTTP 200 OK.
-              </div>
-            </div>
-
-            <div style={{ marginBottom: '12px' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: '#38bdf8' }}>
-                <input
-                  type="checkbox"
-                  checked={fallbackEnabled}
-                  onChange={(e) => setFallbackEnabled(e.target.checked)}
-                  style={{ width: '16px', height: '16px', accentColor: '#10b981' }}
-                />
-                <strong>Kích hoạt Fallback (Trả về khách dự phòng nếu có lỗi)</strong>
-              </label>
-            </div>
-          </div>
-
-          <div>
-            <div className="card-step-label">🚀 Chạy pipeline kết hợp</div>
-            <button
-              className="action-btn"
-              disabled={loading.combined}
-              onClick={() => runDemo('combined', `/api/orders/resilience/combined/1?fallback=${fallbackEnabled}`, patternDefs.combined)}
-              style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}
-            >
-              {loading.combined ? 'Đang thực thi pipeline kết hợp...' : '▶ Chạy thử nghiệm Kết hợp Toàn diện (Combined + Fallback)'}
-            </button>
-
-            {/* HIỂN THỊ KẾT QUẢ NGAY DƯỚI NÚT BẤM CỦA CARD */}
-            {renderCardResultPanel('combined', results.combined)}
-          </div>
-        </div>
-      </div>
-
-      {/* Live Activity Console */}
-      <section className="console-card">
-        <div className="console-header">
-          <div className="console-title">
-            <Terminal size={18} color="#38bdf8" />
-            <span>Live Activity Console (Nhật ký kiểm thử thời gian thực)</span>
-          </div>
-          <button className="clear-btn" onClick={() => setLogs([])}>Xóa nhật ký</button>
-        </div>
-        <div className="console-body">
-          {logs.length === 0 ? (
-            <div style={{ color: '#64748b', fontStyle: 'italic', padding: '12px' }}>Chưa có hoạt động nào. Hãy bấm nút kiểm thử để xem log ghi nhận.</div>
-          ) : (
-            logs.map((log) => (
-              <div key={log.id} className="log-line">
-                <span className="log-time">[{log.time}]</span>
-                <span className={`log-tag log-${log.tag.toLowerCase()}`}>{log.tag}</span>
-                <span className={`log-status status-${log.status}`}>HTTP {log.status}</span>
-                <span className="log-msg">{log.message}</span>
-                {log.elapsedMs > 0 && <span className="log-elapsed">({log.elapsedMs}ms)</span>}
-              </div>
-            ))
-          )}
-        </div>
-      </section>
+        <footer>Order Service <span>→</span> User Service <span>·</span> Resilience4j</footer>
+      </main>
     </div>
   );
 }
