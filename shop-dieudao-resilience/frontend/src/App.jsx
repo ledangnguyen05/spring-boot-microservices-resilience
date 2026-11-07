@@ -347,7 +347,6 @@ export default function App() {
               <div className="stage-meta"><span className="chapter">{scenario.chapter ?? `KỊCH BẢN ${String(selected).padStart(2, '0')}`}</span><span className="condition"><i />{scenario.condition}</span></div>
               <h2>{scenario.title}</h2><p>{scenario.detail}</p>
               <div className="flow"><span><Package size={16} /> Order Service</span><ArrowRight size={17} aria-hidden="true" /><span className="flow-guard"><scenario.icon size={16} /> {scenario.id === 'normal' ? 'OpenFeign' : scenario.name}</span><ArrowRight size={17} aria-hidden="true" /><span><UserRound size={16} /> User Service</span></div>
-
               {lesson && (
                 <div className="knowledge-panel">
                   <div className="knowledge-card">
@@ -380,7 +379,6 @@ export default function App() {
                 </button>
                 {needsRecovery && <button className="reset" disabled={busy || !ready} onClick={recover}>Gửi 2 lượt thăm dò</button>}
               </div>
-
               {busy && <div className="live-stage" role="status"><LoaderCircle className="spinner" size={15} aria-hidden="true" />{stage}</div>}
               {needsRecovery && !busy && !error && <p className="notice">Nút thăm dò đợi mạch cho phép rồi mới gửi. Hai lượt này dùng cùng API với sáu lượt đầu.</p>}
               {services && !ready && <p className="notice">Khởi động Order Service và User Service để chạy demo.</p>}
@@ -393,7 +391,6 @@ export default function App() {
               <div aria-live="polite" aria-busy={busy}>
                 <DemoResults scenario={scenario.id} result={result} breaker={scenario.id === 'converge' ? convergeBreaker : breaker} busy={busy} error={error} view={resultView} onViewChange={setResultView} />
               </div>
-              {needsRecovery && <p className="note">User Service đã được khôi phục. Gửi lượt thăm dò để kiểm tra mạch đóng lại.</p>}
             </div>
           </section>
         </div>
