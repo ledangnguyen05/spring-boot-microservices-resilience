@@ -78,6 +78,7 @@ export default function App() {
   const [route, setRoute] = useState(null);
   const [needsRecovery, setNeedsRecovery] = useState(false);
   const [runCount, setRunCount] = useState(0);
+  const [probeRunCount, setProbeRunCount] = useState(0);
   const running = useRef(false);
   const scenario = scenarios[selected];
   const lesson = lessons[scenario.id];
@@ -116,6 +117,7 @@ export default function App() {
     setRoute(null);
     setNeedsRecovery(false);
     setRunCount(0);
+    setProbeRunCount(0);
   }
 
   async function readBreaker(baseUrl) {
@@ -285,23 +287,33 @@ export default function App() {
   function recover() {
     return perform(async () => {
       const target = route ?? base;
-      setStage('Đang khôi phục User Service…');
+      setProbeRunCount((prev) => prev + 1);
+      setStage('Đang khôi phục User Service (bỏ giả lập sự cố)…');
       await requireOk(user + '/api/chaos/reset', 'POST');
-      setStage('Đang chờ mạch cho phép thăm dò…');
+
       let state = await readBreaker(target);
       for (let attempt = 0; state === 'OPEN' && attempt < 12; attempt += 1) {
+        setStage(`Mạch đang OPEN. Đếm ngược chờ chuyển HALF-OPEN (còn khoảng ${Math.max(1, 10 - attempt)}s)…`);
         await pause(1000);
         state = await readBreaker(target);
       }
-      if (state === 'OPEN') throw new Error('Mạch vẫn đang mở. Hãy thử thăm dò lại.');
-      const calls = result.slice(0, 6);
-      for (let index = 0; index < 2; index += 1) {
-        setStage(`Đang gửi lượt thăm dò ${index + 1}/2…`);
-        calls.push(await callOrder(target, '/circuit-breaker/1'));
-        setResult([...calls]);
-        await pause(450);
-      }
-      await readBreaker(target);
+      if (state === 'OPEN') throw new Error('Mạch vẫn đang mở. Hãy thử lại sau vài giây.');
+
+      const calls = result ? result.slice(0, 6) : [];
+      setStage('Mạch đã chuyển HALF-OPEN! Đang gửi lượt thăm dò 1/2…');
+      const probe1 = await callOrder(target, '/circuit-breaker/1');
+      calls.push(probe1);
+      setResult([...calls]);
+      await pause(600);
+
+      setStage('Lượt 1 thành công 200 OK! Đang gửi lượt thăm dò 2/2 để xác nhận đóng mạch…');
+      const probe2 = await callOrder(target, '/circuit-breaker/1');
+      calls.push(probe2);
+      setResult([...calls]);
+      await pause(500);
+
+      const finalState = await readBreaker(target);
+      setStage(`Cả 2/2 lượt thăm dò thành công 200 OK! Cầu dao đã chuyển về ${finalState === 'CLOSED' ? 'CLOSED 🟢' : finalState}`);
       setNeedsRecovery(false);
     });
   }
@@ -358,56 +370,84 @@ export default function App() {
               <h2>{scenario.title}</h2><p>{scenario.detail}</p>
               <div className="flow"><span><Package size={16} /> Order Service</span><ArrowRight size={17} aria-hidden="true" /><span className="flow-guard"><scenario.icon size={16} /> {scenario.id === 'normal' ? 'OpenFeign' : scenario.name}</span><ArrowRight size={17} aria-hidden="true" /><span><UserRound size={16} /> User Service</span></div>
               {lesson && (
-                <div className="knowledge-panel">
-                  <div className="knowledge-card">
-                    <div className="knowledge-title"><Target size={16} /> Ý NGHĨA KIỂM TRA & QUY TRÌNH</div>
-                    <p>{lesson.goal}</p>
-                    <ol className="lesson-steps">
-                      {lesson.steps.map((st) => <li key={st}>{st}</li>)}
-                    </ol>
-                  </div>
-                  <div className="knowledge-card">
-                    <div className="knowledge-title"><Zap size={16} /> CÔNG DỤNG CHÍNH CỦA CƠ CHẾ</div>
-                    <p>{lesson.mainPurpose}</p>
-                  </div>
-                  <div className="knowledge-card full-width">
-                    <div className="knowledge-title"><BookOpen size={16} /> THUẬT NGỮ TRÊN GIAO DIỆN & LIÊN QUAN</div>
-                    <div className="glossary-grid">
-                      {lesson.terms.map(([term, desc]) => (
-                        <div key={term} className="glossary-item">
-                          <strong>{term}:</strong> <span>{desc}</span>
-                        </div>
-                      ))}
+                <details className="knowledge-accordion">
+                  <summary>
+                    <BookOpen size={16} />
+                    <span>Xem giải thích lý thuyết & thuật ngữ chuyên môn ({scenario.name})</span>
+                  </summary>
+                  <div className="knowledge-panel">
+                    <div className="knowledge-card">
+                      <div className="knowledge-title"><Target size={16} /> Ý NGHĨA KIỂM TRA & QUY TRÌNH</div>
+                      <p>{lesson.goal}</p>
+                      <ol className="lesson-steps">
+                        {lesson.steps.map((st) => <li key={st}>{st}</li>)}
+                      </ol>
+                    </div>
+                    <div className="knowledge-card">
+                      <div className="knowledge-title"><Zap size={16} /> CÔNG DỤNG CHÍNH CỦA CƠ CHẾ</div>
+                      <p>{lesson.mainPurpose}</p>
+                    </div>
+                    <div className="knowledge-card full-width">
+                      <div className="knowledge-title"><BookOpen size={16} /> THUẬT NGỮ TRÊN GIAO DIỆN & LIÊN QUAN</div>
+                      <div className="glossary-grid">
+                        {lesson.terms.map(([term, desc]) => (
+                          <div key={term} className="glossary-item">
+                            <strong>{term}:</strong> <span>{desc}</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
-                </div>
+                </details>
               )}
 
               <div className="controls">
                 <button className="primary" disabled={busy || !ready} onClick={run}>
                   <Play size={17} />{scenario.action}
                 </button>
-                {needsRecovery && <button className="reset" disabled={busy || !ready} onClick={recover}>Gửi 2 lượt thăm dò</button>}
+                {needsRecovery && (
+                  <button className="reset probe-action-btn" disabled={busy || !ready} onClick={recover} title="Gửi đúng 2 lượt thăm dò theo chuẩn Resilience4j">
+                    <Play size={15} /> Gửi 2 lượt thăm dò (HALF-OPEN)
+                  </button>
+                )}
               </div>
               {busy && <div className="live-stage" role="status"><LoaderCircle className="spinner" size={15} aria-hidden="true" />{stage}</div>}
-              {needsRecovery && !busy && !error && <p className="notice">Nút thăm dò đợi mạch cho phép rồi mới gửi. Hai lượt này dùng cùng API với sáu lượt đầu.</p>}
+              {needsRecovery && !busy && !error && (
+                <div className="probe-reason-box">
+                  <strong>💡 Tại sao cần đúng 2 lượt thăm dò?</strong> Theo chuẩn cấu hình Resilience4j (<code>permittedNumberOfCallsInHalfOpenState = 2</code>), khi mạch chuyển sang HALF-OPEN cần tối thiểu <strong>2 lượt thành công liên tiếp</strong> để chắc chắn đối tác đã phục hồi thật sự, loại trừ yếu tố may mắn ngẫu nhiên trước khi chính thức khép mạch về CLOSED.
+                </div>
+              )}
               {services && !ready && <p className="notice">Khởi động Order Service và User Service để chạy demo.</p>}
               {error && <p className="error" role="alert">{error}</p>}
             </div>
 
             <div className="stage-results">
-              <div className="result-heading"><div><div className="section-label">MÔ PHỎNG & KẾT QUẢ ĐO ĐẠC</div><h3>{scenario.question}</h3></div>{route && <span className="route">{route === gateway ? 'Qua Gateway' : 'Gọi trực tiếp'}</span>}</div>
-              {clock && <TimeoutClock key={clock.start} clock={clock} />}
-              <FlowVisualizer
-                scenarioId={scenario.id}
-                busy={busy}
-                liveStage={stage}
-                breakerState={scenario.id === 'converge' ? convergeBreaker : breaker}
-                runCount={runCount}
-                actionLabel={scenario.action}
-              />
-              <div aria-live="polite" aria-busy={busy}>
-                <DemoResults scenario={scenario.id} result={result} breaker={scenario.id === 'converge' ? convergeBreaker : breaker} busy={busy} error={error} view={resultView} onViewChange={setResultView} />
+              <div className="result-heading">
+                <div>
+                  <div className="section-label">BẢNG ĐIỀU KHIỂN & KẾT QUẢ ĐO ĐẠC SONG SONG</div>
+                  <h3>{scenario.question}</h3>
+                </div>
+                {route && <span className="route">{route === gateway ? 'Qua Gateway' : 'Gọi trực tiếp'}</span>}
+              </div>
+
+              <div className="demo-dashboard">
+                <div className="dashboard-visualizer">
+                  <FlowVisualizer
+                    scenarioId={scenario.id}
+                    busy={busy}
+                    liveStage={stage}
+                    breakerState={scenario.id === 'converge' ? convergeBreaker : breaker}
+                    runCount={runCount}
+                    probeRunCount={probeRunCount}
+                    actionLabel={scenario.action}
+                  />
+                </div>
+                <div className="dashboard-results">
+                  {clock && <TimeoutClock key={clock.start} clock={clock} />}
+                  <div aria-live="polite" aria-busy={busy}>
+                    <DemoResults scenario={scenario.id} result={result} breaker={scenario.id === 'converge' ? convergeBreaker : breaker} busy={busy} error={error} view={resultView} onViewChange={setResultView} />
+                  </div>
+                </div>
               </div>
             </div>
           </section>

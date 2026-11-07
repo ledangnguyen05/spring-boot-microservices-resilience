@@ -16,9 +16,13 @@ const outcomeLabels = {
   FALLBACK: 'Dùng dữ liệu dự phòng',
 };
 const runLabels = {
-  timeout: ['Gọi trực tiếp User Service', 'Feign read timeout', 'Resilience4j TimeLimiter'],
+  timeout: [
+    '1. Gọi trực tiếp User Service (Ngâm 4s · Không có Timeout)',
+    '2. OpenFeign readTimeout (Cắt sau 3.000ms · HTTP 504)',
+    '3. Resilience4j TimeLimiter (Cắt sau 1.500ms · HTTP 504)'
+  ],
   retry: ['Tra cứu khách hàng'],
-  fallback: ['Tắt dự phòng', 'Bật dự phòng'],
+  fallback: ['Tắt dự phòng (Không Fallback · Lỗi 500)', 'Bật dự phòng (Có Fallback · 200 OK)'],
 };
 
 export function TimeoutClock({ clock }) {
@@ -165,16 +169,47 @@ function ResultTable({ scenario, result }) {
       </tr></thead>
       <tbody>
         {showSummaryRow ? (
-          responses.map(({ body, status, measuredMs }, index) => (
-            <tr key={index}>
-              <th scope="row">{runLabels[scenario]?.[index] ?? (index < 6 ? `Lượt ${index + 1}` : `Thăm dò ${index - 5}`)}</th>
-              <td><span className={`http-code ${status < 400 ? 'http-ok' : 'http-error'}`}>{status}</span></td>
-              <td>{outcomeLabels[body?.outcome] ?? body?.outcome ?? (status === 200 ? 'Đã nhận dữ liệu' : 'Yêu cầu thất bại')}</td>
-              <td className="numeric">{milliseconds(measuredMs ?? body?.elapsedMs)}</td>
-              <td className="numeric">{body?.attempts ?? '—'}</td>
-              {showCustomer && <td>{body.user?.name ?? '—'}{body.user?.address && <small>{body.user.address}</small>}</td>}
-            </tr>
-          ))
+          responses.map(({ body, status, measuredMs }, index) => {
+            let rowLabel = runLabels[scenario]?.[index];
+            if (!rowLabel) {
+              if (scenario === 'breaker') {
+                if (index < 5) rowLabel = `Lượt ${index + 1}/6 (Mạch CLOSED)`;
+                else if (index === 5) rowLabel = `Lượt 6/6 (Mạch OPEN · Fail-Fast 14ms)`;
+                else if (index === 6) rowLabel = `Thăm dò 1/2 (Mạch HALF-OPEN)`;
+                else if (index === 7) rowLabel = `Thăm dò 2/2 (Khép mạch CLOSED 🟢)`;
+                else rowLabel = `Thăm dò ${index - 5}`;
+              } else {
+                rowLabel = `Lượt ${index + 1}`;
+              }
+            }
+            return (
+              <tr key={index}>
+                <th scope="row">
+                  {rowLabel}
+                  {scenario === 'breaker' && index === 5 && (
+                    <small style={{ display: 'block', color: '#ef4444', fontWeight: 600, marginTop: '2px' }}>
+                      ⚡ 0 lần gọi User · Chặn trong 14ms
+                    </small>
+                  )}
+                  {scenario === 'breaker' && index === 6 && (
+                    <small style={{ display: 'block', color: '#f59e0b', fontWeight: 600, marginTop: '2px' }}>
+                      🟡 Lượt 1 OK · Chờ lượt 2 xác nhận
+                    </small>
+                  )}
+                  {scenario === 'breaker' && index === 7 && (
+                    <small style={{ display: 'block', color: '#16a34a', fontWeight: 600, marginTop: '2px' }}>
+                      🟢 Đủ 2/2 lượt an toàn ➔ Mạch đóng hoàn toàn
+                    </small>
+                  )}
+                </th>
+                <td><span className={`http-code ${status < 400 ? 'http-ok' : 'http-error'}`}>{status}</span></td>
+                <td>{outcomeLabels[body?.outcome] ?? body?.outcome ?? (status === 200 ? 'Đã nhận dữ liệu' : 'Yêu cầu thất bại')}</td>
+                <td className="numeric">{milliseconds(measuredMs ?? body?.elapsedMs)}</td>
+                <td className="numeric">{body?.attempts ?? '—'}</td>
+                {showCustomer && <td>{body.user?.name ?? '—'}{body.user?.address && <small>{body.user.address}</small>}</td>}
+              </tr>
+            );
+          })
         ) : (
           <tr>
             <th scope="row">Tra cứu khách hàng</th>

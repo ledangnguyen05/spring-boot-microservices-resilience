@@ -572,6 +572,84 @@ footer span { margin: 0 4px; color: var(--accent); }
   box-shadow: 0 0 10px rgba(99, 102, 241, 0.5);
 }
 
+/* Side-by-side Dashboard Layout for simultaneous visualizer + table */
+.demo-dashboard {
+  display: grid;
+  grid-template-columns: minmax(0, 1.18fr) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+  margin-top: 14px;
+}
+.dashboard-visualizer, .dashboard-results {
+  min-width: 0;
+}
+@media (max-width: 1024px) {
+  .demo-dashboard {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Collapsible theoretical knowledge accordion */
+.knowledge-accordion {
+  margin: 14px 0 18px 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fafaff;
+  overflow: hidden;
+}
+.knowledge-accordion summary {
+  padding: 10px 14px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--accent);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #f4f3ff;
+  user-select: none;
+}
+.knowledge-accordion summary:hover {
+  background: #ece9fe;
+}
+.knowledge-accordion[open] summary {
+  border-bottom: 1px solid var(--line);
+}
+.knowledge-accordion .knowledge-panel {
+  padding: 14px 16px;
+  margin: 0;
+}
+
+/* Probe Button & Explanation Box */
+.probe-action-btn {
+  border-color: #f59e0b !important;
+  color: #b45309 !important;
+  background: #fffbeb !important;
+  font-weight: 800 !important;
+}
+.probe-action-btn:hover:not(:disabled) {
+  background: #fef3c7 !important;
+  border-color: #d97706 !important;
+  color: #92400e !important;
+}
+.probe-reason-box {
+  margin: 12px 0 6px 0;
+  padding: 10px 14px;
+  background: #fffbeb;
+  border-left: 4px solid #f59e0b;
+  border-radius: 0 8px 8px 0;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  color: #78350f;
+}
+.probe-reason-box code {
+  background: #fde68a;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-weight: 700;
+  color: #92400e;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .spinner { animation: none; }
   .animated-flow-line { animation: none; }
