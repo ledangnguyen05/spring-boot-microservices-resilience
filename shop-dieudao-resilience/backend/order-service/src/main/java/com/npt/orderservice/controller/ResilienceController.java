@@ -89,10 +89,13 @@ public class ResilienceController {
             }
             Map<String, Integer> summary = new TreeMap<>();
             List<String> details = new ArrayList<>();
+            List<Map<String, Object>> requestResults = new ArrayList<>();
             int i = 1;
             for (CompletableFuture<DemoResult> f : futures) {
                 DemoResult r = f.join();
                 summary.merge(r.outcome(), 1, Integer::sum);
+                requestResults.add(Map.of("number", i, "outcome", r.outcome(), "httpStatus", r.httpStatus(),
+                        "elapsedMs", r.elapsedMs(), "attempts", r.attempts()));
                 details.add("#" + (i++) + " -> " + r.outcome() + " (" + r.elapsedMs() + "ms, "
                         + r.attempts() + " lần gọi thật)");
             }
@@ -102,6 +105,7 @@ public class ResilienceController {
             out.put("totalMs", System.currentTimeMillis() - begin);
             out.put("summary", summary);
             out.put("details", details);
+            out.put("requestResults", requestResults);
             return out;
         } finally {
             pool.shutdown();

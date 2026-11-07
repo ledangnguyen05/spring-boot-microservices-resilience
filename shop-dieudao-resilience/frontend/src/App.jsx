@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Activity, ArrowRight, ChevronRight, CircleHelp, Clock3, Layers3, LoaderCircle,
+  Activity, ArrowRight, ChevronRight, CircleCheck, CircleHelp, Clock3, Layers3, LoaderCircle,
   Package, Play, RefreshCw, RotateCcw, ShieldCheck, UserRound, Zap,
 } from 'lucide-react';
-import DemoResults from './DemoResults.jsx';
+import DemoResults, { TimeoutClock } from './DemoResults.jsx';
 
 const gateway = 'http://localhost:8080';
 const order = 'http://localhost:8082';
@@ -11,8 +11,11 @@ const user = 'http://localhost:8081';
 const resilience = '/api/orders/resilience';
 
 const scenarios = [
+  { id: 'normal', name: 'Bình thường', icon: CircleCheck, label: 'Dữ liệu đầy đủ', title: 'Xem đơn hàng #001',
+    detail: 'Order Service đọc đơn hàng và lấy thông tin khách hàng tương ứng từ User Service.',
+    condition: 'Không giả lập lỗi', action: 'Xem thông tin đơn hàng', question: 'Đơn hàng trả về dữ liệu gì?' },
   { id: 'timeout', name: 'Timeout', icon: Clock3, label: 'Phản hồi chậm', title: 'Khách hàng đang chờ',
-    detail: 'User Service mất 4 giây để trả thông tin khách. So sánh thời gian chờ của Feign và TimeLimiter.',
+    detail: 'Đo phản hồi trực tiếp sau khoảng 4 giây, rồi xem Feign và TimeLimiter dừng chờ ở mốc nào.',
     condition: 'Trễ 4 giây', action: 'So sánh thời gian chờ', question: 'Hệ thống chờ bao lâu?' },
   { id: 'retry', name: 'Retry', icon: RefreshCw, label: 'Lỗi tạm thời', title: 'Lỗi hai lần rồi hồi phục',
     detail: 'User Service trả lỗi ở hai lần gọi đầu. Order Service tự thử lại trong cùng một yêu cầu.',
@@ -54,6 +57,7 @@ export default function App() {
   const [services, setServices] = useState(null);
   const [breaker, setBreaker] = useState(null);
   const [result, setResult] = useState(null);
+  const [clock, setClock] = useState(null);
   const [resultView, setResultView] = useState('table');
   const [stage, setStage] = useState('');
   const [error, setError] = useState('');
@@ -90,6 +94,7 @@ export default function App() {
   function select(index) {
     setSelected(index);
     setResult(null);
+    setClock(null);
     setError('');
     setRoute(null);
     setNeedsRecovery(false);
@@ -125,6 +130,7 @@ export default function App() {
 
   function run() {
     setResult(null);
+    setClock(null);
     setNeedsRecovery(false);
     setRoute(base);
     return perform(async () => {
@@ -135,16 +141,37 @@ export default function App() {
       }
       const query = { timeout: 'delayMs=4000', retry: 'failFirstN=2', bulkhead: 'delayMs=2000',
         breaker: 'failPercent=100', fallback: 'failPercent=100' }[scenario.id];
-      await requireOk(`${user}/api/chaos?${query}`, 'POST');
+      if (query) await requireOk(`${user}/api/chaos?${query}`, 'POST');
       setStage('Đang gọi Order Service…');
 
       switch (scenario.id) {
+        case 'normal': {
+          const response = await request(base + '/api/orders/1');
+          if (!response.body || (response.status === 200 && response.body.orderId !== 1)) {
+            throw new Error(`Order Service trả phản hồi ngoài kịch bản (HTTP ${response.status}).`);
+          }
+          setResult(response);
+          break;
+        }
         case 'timeout': {
-          const feign = await callOrder(base, '/bulkhead/1');
-          setResult([feign]);
-          setStage('Đang đo TimeLimiter…');
-          const limiter = await callOrder(base, '/timeout/1');
-          setResult([feign, limiter]);
+          const phases = [
+            ['Gọi trực tiếp User Service', 4000, () => request(user + '/api/users/1')],
+            ['Đo Feign read timeout', 3000, () => callOrder(base, '/bulkhead/1')],
+            ['Đo Resilience4j TimeLimiter', 1500, () => callOrder(base, '/timeout/1')],
+          ];
+          const responses = [];
+          for (const [label, targetMs, call] of phases) {
+            setStage(label + '…');
+            const start = performance.now();
+            setClock({ label, targetMs, start });
+            try {
+              const response = await call();
+              responses.push({ ...response, measuredMs: Math.round(performance.now() - start) });
+              setResult([...responses]);
+            } finally {
+              setClock(null);
+            }
+          }
           break;
         }
         case 'retry':
@@ -245,7 +272,7 @@ export default function App() {
             <div className="stage-header">
               <div className="stage-meta"><span className="chapter">KỊCH BẢN {String(selected + 1).padStart(2, '0')}</span><span className="condition"><i />{scenario.condition}</span></div>
               <h2>{scenario.title}</h2><p>{scenario.detail}</p>
-              <div className="flow"><span><Package size={16} /> Order Service</span><ArrowRight size={17} aria-hidden="true" /><span className="flow-guard"><scenario.icon size={16} /> {scenario.name}</span><ArrowRight size={17} aria-hidden="true" /><span><UserRound size={16} /> User Service</span></div>
+              <div className="flow"><span><Package size={16} /> Order Service</span><ArrowRight size={17} aria-hidden="true" /><span className="flow-guard"><scenario.icon size={16} /> {scenario.id === 'normal' ? 'OpenFeign' : scenario.name}</span><ArrowRight size={17} aria-hidden="true" /><span><UserRound size={16} /> User Service</span></div>
               <div className="controls">
                 <button className="primary" disabled={busy || !ready} onClick={run}>{busy ? <LoaderCircle className="spinner" size={17} /> : <Play size={17} />}{stage || scenario.action}</button>
                 {needsRecovery && <button className="reset" disabled={busy || !ready} onClick={recover}>Gửi lượt thăm dò</button>}
@@ -256,6 +283,7 @@ export default function App() {
 
             <div className="stage-results">
               <div className="result-heading"><div><div className="section-label">KẾT QUẢ</div><h3>{scenario.question}</h3></div>{route && <span className="route">{route === gateway ? 'Qua Gateway' : 'Gọi trực tiếp'}</span>}</div>
+              {clock && <TimeoutClock key={clock.start} clock={clock} />}
               <div aria-live="polite" aria-busy={busy}>
                 <DemoResults scenario={scenario.id} result={result} breaker={breaker} busy={busy} error={error} view={resultView} onViewChange={setResultView} />
               </div>
