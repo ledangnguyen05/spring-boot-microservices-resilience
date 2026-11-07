@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Activity, ArrowRight, ChevronRight, CircleCheck, CircleHelp, Clock3, Layers3, LoaderCircle,
+  Activity, ArrowRight, BookOpen, ChevronRight, CircleCheck, CircleHelp, Clock3, Layers3, LoaderCircle,
   Package, Play, RefreshCw, RotateCcw, ShieldCheck, UserRound, Zap,
 } from 'lucide-react';
 import DemoResults, { TimeoutClock } from './DemoResults.jsx';
+import { lessons } from './demoLessons.js';
 
 const gateway = 'http://localhost:8080';
 const order = 'http://localhost:8082';
@@ -64,6 +65,7 @@ export default function App() {
   const [needsRecovery, setNeedsRecovery] = useState(false);
   const running = useRef(false);
   const scenario = scenarios[selected];
+  const lesson = lessons[scenario.id];
 
   useEffect(() => {
     let active = true;
@@ -174,9 +176,11 @@ export default function App() {
           break;
         }
         case 'retry':
+          setStage('Đang chờ Order Service xử lý và thử lại…');
           setResult(await callOrder(base, '/retry/1'));
           break;
         case 'bulkhead':
+          setStage('Đang gửi 10 lượt và thu kết quả từng lượt…');
           setResult(await callOrder(base, '/burst/bulkhead?n=10'));
           break;
         case 'breaker': {
@@ -191,9 +195,11 @@ export default function App() {
           break;
         }
         case 'fallback': {
+          setStage('Đang gọi khi tắt dữ liệu dự phòng…');
           const noFallback = await callOrder(base, '/combined/1?fallback=false');
           setResult([noFallback]);
           await requireOk(base + resilience + '/reset', 'POST');
+          setStage('Đang gọi khi bật dữ liệu dự phòng…');
           const withFallback = await callOrder(base, '/combined/1?fallback=true');
           setResult([noFallback, withFallback]);
           break;
@@ -205,6 +211,8 @@ export default function App() {
   function recover() {
     return perform(async () => {
       const target = route ?? base;
+      setStage('Đang khôi phục User Service…');
+      await requireOk(user + '/api/chaos/reset', 'POST');
       setStage('Đang chờ mạch cho phép thăm dò…');
       let state = await readBreaker(target);
       for (let attempt = 0; state === 'OPEN' && attempt < 12; attempt += 1) {
@@ -212,9 +220,9 @@ export default function App() {
         state = await readBreaker(target);
       }
       if (state === 'OPEN') throw new Error('Mạch vẫn đang mở. Hãy thử thăm dò lại.');
-      setStage('Đang gửi 2 lượt thăm dò…');
       const calls = result.slice(0, 6);
       for (let index = 0; index < 2; index += 1) {
+        setStage(`Đang gửi lượt thăm dò ${index + 1}/2…`);
         calls.push(await callOrder(target, '/circuit-breaker/1'));
         setResult([...calls]);
       }
@@ -272,10 +280,20 @@ export default function App() {
               <div className="stage-meta"><span className="chapter">KỊCH BẢN {String(selected + 1).padStart(2, '0')}</span><span className="condition"><i />{scenario.condition}</span></div>
               <h2>{scenario.title}</h2><p>{scenario.detail}</p>
               <div className="flow"><span><Package size={16} /> Order Service</span><ArrowRight size={17} aria-hidden="true" /><span className="flow-guard"><scenario.icon size={16} /> {scenario.id === 'normal' ? 'OpenFeign' : scenario.name}</span><ArrowRight size={17} aria-hidden="true" /><span><UserRound size={16} /> User Service</span></div>
+              <section className="lesson" aria-label="Mục đích và quy trình demo">
+                <p><strong>Mục đích</strong> {lesson.goal}</p>
+                <ol aria-label="Các bước của kịch bản">{lesson.steps.map((step) => <li key={step}>{step}</li>)}</ol>
+                <details key={scenario.id} className="lesson-terms">
+                  <summary><BookOpen size={16} aria-hidden="true" /> {scenario.id === 'breaker' ? 'Thuật ngữ · Vì sao lượt 6 bị chặn?' : 'Giải thích thuật ngữ'}</summary>
+                  <dl>{lesson.terms.map(([term, explanation]) => <div key={term}><dt>{term}</dt><dd>{explanation}</dd></div>)}</dl>
+                </details>
+              </section>
               <div className="controls">
-                <button className="primary" disabled={busy || !ready} onClick={run}>{busy ? <LoaderCircle className="spinner" size={17} /> : <Play size={17} />}{stage || scenario.action}</button>
-                {needsRecovery && <button className="reset" disabled={busy || !ready} onClick={recover}>Gửi lượt thăm dò</button>}
+                <button className="primary" disabled={busy || !ready} onClick={run}><Play size={17} />{scenario.action}</button>
+                {needsRecovery && <button className="reset" disabled={busy || !ready} onClick={recover}>Gửi 2 lượt thăm dò</button>}
               </div>
+              {busy && <div className="live-stage" role="status"><LoaderCircle className="spinner" size={15} aria-hidden="true" />{stage}</div>}
+              {needsRecovery && !busy && !error && <p className="notice">Nút thăm dò đợi mạch cho phép rồi mới gửi. Hai lượt này dùng cùng API với sáu lượt đầu.</p>}
               {services && !ready && <p className="notice">Khởi động Order Service và User Service để chạy demo.</p>}
               {error && <p className="error" role="alert">{error}</p>}
             </div>
@@ -286,7 +304,6 @@ export default function App() {
               <div aria-live="polite" aria-busy={busy}>
                 <DemoResults scenario={scenario.id} result={result} breaker={breaker} busy={busy} error={error} view={resultView} onViewChange={setResultView} />
               </div>
-              {needsRecovery && <p className="note">User Service đã được khôi phục. Gửi lượt thăm dò để kiểm tra mạch đóng lại.</p>}
             </div>
           </section>
         </div>

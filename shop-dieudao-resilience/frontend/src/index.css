@@ -95,6 +95,19 @@ svg { flex-shrink: 0; }
 .flow span { display: inline-flex; align-items: center; gap: 7px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); font-size: .76rem; font-weight: 800; color: #474b65; }
 .flow .flow-guard { background: var(--tint); border-color: #e4dfff; color: var(--accent); }
 .controls { flex-wrap: wrap; }
+.lesson { margin: 0 0 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: #fafaff; }
+.lesson p, .lesson dd { color: var(--muted); font-size: .8rem; line-height: 1.55; }
+.lesson p strong { color: var(--ink); margin-right: 4px; }
+.lesson ol { display: flex; gap: 7px; flex-wrap: wrap; list-style: none; counter-reset: lesson-step; margin: 9px 0; padding: 0; }
+.lesson li { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 6px; background: #efedff; color: #433985; font-size: .75rem; }
+.lesson li::before { counter-increment: lesson-step; content: counter(lesson-step); font-weight: 800; }
+.lesson-terms summary { display: flex; align-items: center; gap: 7px; cursor: pointer; color: var(--accent); font-size: .8rem; font-weight: 800; }
+.lesson-terms summary::after { content: '+'; margin-left: auto; }
+.lesson-terms[open] summary::after { content: '−'; }
+.lesson-terms dl { display: grid; gap: 8px; margin: 9px 0 0; }
+.lesson-terms dt { font-size: .8rem; font-weight: 800; }
+.lesson-terms dd { margin: 2px 0 0; }
+.live-stage { display: flex; align-items: center; gap: 7px; margin-top: 10px; color: var(--accent); font-size: .8rem; }
 .stage-header > .notice, .stage-header > .error { margin-top: 10px; font-size: .8rem; }
 .stage-header > .error { color: #a63d35; }
 .spinner { animation: spin 1s linear infinite; }
@@ -154,6 +167,7 @@ svg { flex-shrink: 0; }
 .conclusion ol { margin: 6px 0 9px; padding-left: 19px; font-size: .83rem; line-height: 1.55; }
 .conclusion li + li { margin-top: 3px; }
 .conclusion p { font-size: .83rem; line-height: 1.55; }
+.conclusion .takeaway { margin-top: 8px; padding-top: 8px; border-top: 1px solid #ddd8f5; }
 footer { text-align: right; color: var(--muted); font-size: .73rem; margin-top: 16px; }
 footer span { margin: 0 4px; color: var(--accent); }
 
