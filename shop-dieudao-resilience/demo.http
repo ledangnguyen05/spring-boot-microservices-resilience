@@ -1,5 +1,5 @@
 ### ============================================================
-### DEMO RESILIENCE4J - chay tung request bang IntelliJ HTTP Client
+### NEXUS RESILIENCE STUDIO - Kich ban kiem thu bang IntelliJ HTTP Client
 ### Khoi dong: user-service(8081) -> order-service(8082) -> api-gateway(8080)
 ### Moi request di qua gateway (8080); "chaos" goi thang user-service (8081) de pha.
 ### ============================================================
