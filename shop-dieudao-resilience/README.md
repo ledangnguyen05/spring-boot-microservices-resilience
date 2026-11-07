@@ -1,26 +1,37 @@
 # Nexus Resilience Studio - Microservices Architecture (Fullstack Demo)
 
 > **Đề tài Seminar Microservices (15 phút):**
-> 1. **Resilience4j CircuitBreaker** (kèm Fallback an toàn)
-> 2. **Resilience4j Bulkhead** (Semaphore & ThreadPool cô lập tài nguyên)
-> 3. **Feign / RestClient Timeout** (Connect & Read Timeout hai tầng)
-> 4. **Resilience4j Retry** (Exponential Backoff, chống Retry Storm)
+> 1. **Topic 1: Feign / RestClient Timeout** (Connect & Read Timeout hai tầng)
+> 2. **Topic 2: Spring Retry / Resilience4j Retry** (Exponential Backoff, chống Retry Storm)
+> 3. **Topic 3: Resilience4j Bulkhead** (Semaphore & ThreadPool cô lập tài nguyên)
+> 4. **Topic 4: Resilience4j CircuitBreaker** (Ngắt mạch tự động, Fail-fast 0ms)
+> 
+> *Phần mở rộng (Bonus):* **Kiến trúc kết hợp cả 4 Pattern + Dữ liệu dự phòng (Fallback)**.
 
 Dự án đã được phân chia thành **2 thư mục tách biệt hoàn toàn**:
 - **`backend/` (BE)**: Hệ thống 3 Spring Boot Microservices (`api-gateway`, `order-service`, `user-service`).
 - **`frontend/` (FE)**: Ứng dụng React Dashboard hiện đại (Vite + Lucide Icons) hỗ trợ kiểm thử trực quan thời gian thực.
 - **`TESTING_GUIDE.md`**: Cẩm nang hướng dẫn kiểm thử chi tiết từ giao diện Web đến cURL và unit test.
+- **`DEMO_RESILIENCE.md`**: Chi tiết lý thuyết, bảng so sánh và các bước thực hành từng bước.
 
 ---
 
-## 1. Cấu trúc Dự án (BE & FE Tách Biệt)
+## 1. Yêu cầu Môi trường (Prerequisites)
+
+- **Java JDK:** Phiên bản **17 LTS** trở lên (`java -version`).
+- **Node.js & npm:** Node.js **18.x** hoặc **20.x+** (`node -v`, `npm -v`).
+- **Hệ điều hành:** Windows, macOS hoặc Linux.
+
+---
+
+## 2. Cấu trúc Dự án (BE & FE Tách Biệt)
 
 ```text
 shop-dieudao-resilience/
 │
 ├── backend/                              # [BE] Toàn bộ mã nguồn Microservices Spring Boot
 │   ├── pom.xml                           # Root POM quản lý 3 submodule (Java 17)
-│   ├── mvnw, mvnw.cmd                    # Maven wrapper 3.9.9
+│   ├── mvnw, mvnw.cmd                    # Maven wrapper 3.9.9 (chạy tại thư mục backend/)
 │   ├── api-gateway/                      # Cổng API Gateway :8080 (WebFlux + Swagger Aggregator)
 │   │   └── src/main/resources/application.properties
 │   ├── order-service/                    # Dịch vụ Order & Resilience4j :8082
@@ -44,35 +55,40 @@ shop-dieudao-resilience/
 ├── frontend/                             # [FE] Giao diện React Dashboard kiểm thử
 │   ├── package.json                      # React 18, Vite, Lucide-React
 │   ├── vite.config.js                    # Chạy trên port 3000
-│   ├── index.html                        # Giao diện Dark Tech hiện đại
 │   └── src/
-│       ├── App.jsx                       # Dashboard điều khiển Chaos & test 4 pattern
-│       ├── index.css                     # Glassmorphism, animations, responsive
+│       ├── App.jsx                       # Điều khiển các kịch bản demo 4 topic + Bonus
+│       ├── DemoResults.jsx               # Kết xuất dạng bảng dữ liệu & kết luận phân tích
+│       ├── index.css                     # Giao diện hiện đại, responsive
 │       └── main.jsx                      # React entrypoint
 │
 ├── demo.http                             # Kịch bản test nhanh trong IntelliJ HTTP Client
-└── README.md                             # Hướng dẫn chi tiết & Kịch bản thuyết trình 15 phút
+├── DEMO_RESILIENCE.md                    # Chi tiết lý thuyết, so sánh kỹ thuật & hướng dẫn Swagger
+├── TESTING_GUIDE.md                      # Hướng dẫn kiểm thử thực tế và nguyên lý Ban đầu vs Sau đó
+└── README.md
 ```
 
 ---
 
-## 2. Hướng dẫn Khởi động Hệ thống
+## 3. Hướng dẫn Khởi động Hệ thống
+
+> [!IMPORTANT]
+> Script Maven Wrapper (`mvnw` / `mvnw.cmd`) nằm tại thư mục gốc **`backend/`**. Khi chạy lệnh bằng cờ `-pl`, hãy đứng từ `backend/`.
 
 ### Bước 1: Khởi động Backend (3 Service)
-Mở 3 terminal hoặc chạy trực tiếp bằng nút ▶ trong IntelliJ:
+Mở 3 terminal riêng biệt (hoặc chạy trực tiếp qua Run Configurations trong IntelliJ):
 
 ```bash
 # Terminal 1: Chạy User Service (Port 8081)
-cd backend/user-service
-./mvnw spring-boot:run
+cd backend
+.\mvnw.cmd -pl user-service spring-boot:run     # Trên Linux/macOS: ./mvnw -pl user-service spring-boot:run
 
 # Terminal 2: Chạy Order Service (Port 8082)
-cd backend/order-service
-./mvnw spring-boot:run
+cd backend
+.\mvnw.cmd -pl order-service spring-boot:run    # Trên Linux/macOS: ./mvnw -pl order-service spring-boot:run
 
 # Terminal 3: Chạy API Gateway (Port 8080)
-cd backend/api-gateway
-./mvnw spring-boot:run
+cd backend
+.\mvnw.cmd -pl api-gateway spring-boot:run      # Trên Linux/macOS: ./mvnw -pl api-gateway spring-boot:run
 ```
 
 ### Bước 2: Khởi động Frontend (React Dashboard)
@@ -88,50 +104,71 @@ Truy cập trình duyệt: **[http://localhost:3000](http://localhost:3000)** đ
 
 ---
 
-## 3. Các tính năng nổi bật trên Giao diện React (`frontend/`)
+## 4. Swagger / OpenAPI 3 UI & Kiểm tra Tương thích
 
-1. **Bộ đèn báo trạng thái (Service Health Indicator):** Tự động ping và hiển thị trạng thái `Online / Offline` của cả 3 microservice.
-2. **Sơ đồ luồng xử lý (Architecture Pipeline Bar):** Trực quan hóa đường đi của gói tin:  
-   `React UI (:3000) ➔ Gateway (:8080) ➔ Order Service (:8082) ➔ User Service (:8081)`.
-3. **Trung tâm điều khiển sự cố (Chaos Control Center):**
-   - Nút bấm 1-click kích hoạt sự cố: "Chậm 4s" (Test Timeout), "Lỗi 2 lần đầu" (Test Retry), "Sập 100%" (Test Circuit Breaker), "Reset về bình thường".
-   - Tự do tinh chỉnh `delayMs`, `% lỗi 500`, và `failFirstN`.
-4. **4 Thẻ kiểm thử Pattern tương tác:**
-   - **Pattern 1: Timeout (1.5s):** Bấm nút test, đo thời gian phản hồi thực tế và mã lỗi trả về (504).
-   - **Pattern 2: Retry (3 lần):** Hiển thị số lần gọi thực tế (`attempts`), kiểm chứng khả năng tự hồi phục khi gặp lỗi thoáng qua.
-   - **Pattern 3: Bulkhead (3 concurrent):** Bắn $N$ request đồng thời (Burst Test), hiển thị rõ số request được xử lý và số request bị từ chối với mã 429.
-   - **Pattern 4: Circuit Breaker:** Hiển thị trực tiếp huy hiệu trạng thái **`CLOSED 🟢`**, **`OPEN 🔴` (Fail-fast 0ms)**, hoặc **`HALF_OPEN 🟡`**, kèm nút bắn 6 request liên tiếp và nút Reset.
-   - **Pattern 5: Combined + Fallback:** Công tắc bật/tắt Fallback để xem dữ liệu an toàn `Khách (dự phòng)` hoặc mã lỗi thật.
-5. **Nhật ký kiểm thử thời gian thực (Live Activity Console):** Ghi lại timestamp, mã HTTP, độ trễ ms và thông điệp giải thích tiếng Việt cho từng thao tác.
+Cổng API Gateway được tích hợp sẵn bộ gộp Swagger Aggregator để tra cứu API toàn hệ thống tại một nơi:
 
----
-
-## 4. Swagger / OpenAPI 3 UI
-
+- **Gateway Swagger Aggregator (Tập trung cả 2 service):** [http://localhost:8080/swagger-ui.html](http://localhost:8080/swagger-ui.html)
 - **Order Service Swagger:** [http://localhost:8082/swagger-ui/index.html](http://localhost:8082/swagger-ui/index.html)
 - **User Service Swagger:** [http://localhost:8081/swagger-ui/index.html](http://localhost:8081/swagger-ui/index.html)
 
-| Dịch vụ | API |
-| --- | --- |
-| API Gateway | `GET /actuator/health` |
-| User Service | `GET /api/users/{userId}` |
-| User Service · Chaos | `GET /api/chaos` xem trạng thái, `POST /api/chaos` cấu hình lỗi, `POST /api/chaos/reset` khôi phục |
-| Order Service | `GET /api/orders/{orderId}` |
-| Order Service · Resilience | `GET /api/orders/resilience/status` xem trạng thái, `POST /api/orders/resilience/reset` đặt lại Circuit Breaker |
-
-Xem các lệnh chạy Timeout, Retry, Bulkhead và Circuit Breaker trong [hướng dẫn demo](DEMO_RESILIENCE.md).
+> [!NOTE]
+> Dự án sử dụng `springdoc-openapi-starter-webmvc-ui` phiên bản `2.8.5` kết hợp Spring Cloud Gateway WebFlux. Đã kiểm tra tương thích và biên dịch không có cảnh báo xung đột bean.
 
 ---
 
-## 5. Dàn ý Slide & Kịch bản Thuyết trình Seminar 15 Phút
+## 5. Bảng So Sánh Lý Thuyết (Dùng Cho Slide Thuyết Trình)
 
-- **Phút 00 - 03:** Đặt vấn đề cascading failure trong Microservices.
-- **Phút 03 - 06:** Giới thiệu 4 Pattern: Feign Timeout, Resilience4j Retry, Bulkhead, Circuit Breaker.
-- **Phút 06 - 12:** **Live Demo trực tiếp trên giao diện React (`http://localhost:3000`)**:
-  - Demo 1: Bật delay 4s ➔ Bấm test Timeout ➔ Ngắt ở 1.5s (HTTP 504).
-  - Demo 2: Bật lỗi 2 lần ➔ Bấm test Retry ➔ Thành công ở lần 3 (HTTP 200).
-  - Demo 3: Bắn 10 request đồng thời ➔ 3 OK, 7 bị chặn ngay (HTTP 429).
-  - Demo 4: Bật lỗi 100% ➔ Bắn 6 request ➔ Thấy mạch chuyển sang đỏ `OPEN` và trả về ngay 0ms.
-  - Demo 5: Bật Fallback ➔ Nhận thông tin `Khách (dự phòng)` êm đẹp.
-- **Phút 12 - 14:** Trình bày thứ tự lồng Decorators & giải pháp chống Retry Storm.
+### Bảng 1: Spring Retry vs Resilience4j Retry
+
+| Tiêu chí | Spring Retry | Resilience4j Retry |
+| --- | --- | --- |
+| **Cơ chế triển khai** | Dựa trên Spring AOP Proxy (`@Retryable`, `@EnableRetry`) hoặc `RetryTemplate`. | Functional Decorator (`Decorators.ofSupplier()`), độc lập hoàn toàn với Spring context. |
+| **Thứ tự lồng nhau** | Khó kiểm soát thứ tự khi kết hợp với Circuit Breaker/Bulkhead nếu dùng annotation. | Rõ ràng, minh bạch: thứ tự Decorator quyết định chính xác lớp nào bọc ngoài, lớp nào bọc trong. |
+| **Phạm vi áp dụng** | Thích hợp cho ứng dụng Spring monolith truyền thống. | Chuẩn công nghiệp cho kiến trúc Microservices hiện đại, tương thích tốt với reactive & async. |
+| **Chống Retry Storm** | Cần viết thêm logic can thiệp thủ công. | Dễ dàng cấu hình predicate loại trừ `CallNotPermittedException` (khi CB mở) và 4xx client errors. |
+
+### Bảng 2: Feign Timeout vs RestClient Timeout vs TimeLimiter
+
+| Tầng Timeout | Vị trí áp dụng | Ngưỡng cấu hình | Tác dụng & Đặc điểm |
+| --- | --- | --- | --- |
+| **Feign Timeout** | Tầng HTTP Client (OpenFeign) | `connectTimeout=1000ms`, `readTimeout=3000ms` | Cắt đứt kết nối socket HTTP khi downstream không phản hồi sau 3 giây. Trả mã `504 FEIGN_TIMEOUT`. |
+| **RestClient Timeout** | Tầng HTTP Client (Spring RestClient) | Cấu hình qua `ClientHttpRequestFactory` | Tương đương Feign timeout nhưng dùng cho client hướng hàm kiểu mới của Spring 6+. |
+| **Resilience4j TimeLimiter** | Tầng Application / Decorator | `demo.timeout.duration-ms=1500ms` | Lớp bảo vệ bổ sung (tầng 2): ngắt chờ sau 1.5 giây để giải phóng thread pool của Order Service sớm hơn. |
+
+---
+
+## 6. Kiểm Thử Tự Động (Unit & Integration Tests)
+
+Chạy bộ kiểm thử tự động toàn bộ 3 microservices bằng Maven:
+
+```bash
+cd backend
+.\mvnw.cmd test    # Hoặc ./mvnw test trên Linux/macOS
+```
+
+**Kết quả kiểm thử (`BUILD SUCCESS`):**
+- `OrderServiceApplicationTests`: Context loads thành công.
+- `ResiliencePatternsTest`:
+  - `testCircuitBreakerOpensOnFailure`: CB nhảy từ `CLOSED` sang `OPEN` khi lỗi đạt ngưỡng 50%.
+  - `testBulkheadLimitsConcurrentCalls`: Bulkhead giới hạn đúng 3 request song song, từ chối request thứ 4 với `BulkheadFullException`.
+  - `testRetryRetriesOnException`: Retry tự thử lại đúng 3 lần với exponential backoff.
+  - `testClientErrorIgnoredByRetryAndCircuitBreaker`: Lỗi 4xx (Client Error) không bị retry oan và không làm tăng failure rate của CB.
+  - `testCircuitBreakerOpenPreventsRetryStorm`: Khi CB đang `OPEN`, Retry không gọi lại vô ích (chống Retry Storm).
+- `UserServiceApplicationTests` & `ChaosStateTest`: Mô phỏng và kiểm soát tỷ lệ lỗi runtime chính xác.
+- `ApiGatewayApplicationTests`: Gateway routing & CORS WebFilter hoạt động chính xác.
+
+---
+
+## 7. Kịch Bản Thuyết Trình Seminar 15 Phút (Đúng 4 Topic)
+
+- **Phút 00 - 02:** Mở đầu & Đặt vấn đề Cascading Failure trong kiến trúc Microservices.
+- **Phút 02 - 05:** Trình bày lý thuyết 4 Topic chính (dùng 2 bảng so sánh mục 5).
+- **Phút 05 - 12: Live Demo trên Web UI (`http://localhost:3000`):**
+  - **Topic 1 (Timeout):** User Service trễ 4s ➔ Feign timeout ngắt ở 3s (`FEIGN_TIMEOUT`), TimeLimiter ngắt ở 1.5s (`TIMEOUT`).
+  - **Topic 2 (Retry):** User Service lỗi 2 lần đầu ➔ Retry tự động thử lại với Exponential Backoff (500ms, 1000ms) ➔ Thành công ở lần 3 (`attempts = 3`).
+  - **Topic 3 (Bulkhead):** Bắn 10 request song song ➔ 3 request được cấp slot xử lý, 7 request vượt ngưỡng bị từ chối ngay lập tức trong 2ms với mã `429 BULKHEAD_FULL`.
+  - **Topic 4 (Circuit Breaker):** User Service sập 100% ➔ Sau 5 request lỗi, mạch nhảy sang `OPEN` (Fail-fast 0ms). Khi khôi phục, gửi 2 request thăm dò chuyển về `CLOSED`.
+  - *(Phần Bonus nếu còn thời gian):* Bật Fallback để hiển thị dữ liệu an toàn `Khách (dự phòng)`.
+- **Phút 12 - 14:** Phân tích thứ tự Decorators và giải pháp chống Retry Storm (`CB -> Retry -> 4xx Ignore`).
 - **Phút 14 - 15:** Tổng kết & Hỏi đáp (Q&A).

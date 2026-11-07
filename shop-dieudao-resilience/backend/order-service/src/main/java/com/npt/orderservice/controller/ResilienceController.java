@@ -37,7 +37,14 @@ public class ResilienceController {
         this.service = service;
     }
 
-    @Operation(summary = "Demo 1: Timeout (TimeLimiter)",
+    @Operation(summary = "Demo 1a: Feign Timeout (Read Timeout 3s - Topic chính)",
+            description = "Gọi thẳng OpenFeign client không qua Decorator nào; khi User Service trễ 4s, Feign cắt sau 3s (readTimeout) trả mã 504 FEIGN_TIMEOUT.")
+    @GetMapping("/feign-timeout/{userId}")
+    public ResponseEntity<DemoResult> feignTimeout(@PathVariable Long userId) {
+        return reply(service.feignTimeout(userId));
+    }
+
+    @Operation(summary = "Demo 1b: Timeout (TimeLimiter 1.5s - Lớp bảo vệ bổ sung)",
             description = "Sử dụng TimeLimiter cắt đứt lời gọi sau 1.5s nếu user-service phản hồi chậm, trả về mã 504 TIMEOUT.")
     @GetMapping("/timeout/{userId}")
     public ResponseEntity<DemoResult> timeout(@PathVariable Long userId) {

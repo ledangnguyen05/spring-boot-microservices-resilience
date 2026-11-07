@@ -18,24 +18,26 @@ Luồng gọi: **React UI (`:3000`) ➔ API Gateway (`:8080`) ➔ Order Service 
 
 ---
 
-### MẪU 1: TIMEOUT (TimeLimiter 1.5s & Feign Timeout 3s)
+### MẪU 1: TIMEOUT (Feign ReadTimeout 3s & Resilience4j TimeLimiter 1.5s)
 
 #### 1. Nguyên lý hoạt động (Ban đầu vs Sau đó)
 - 🔴 **Ban đầu (Khi KHÔNG CÓ Timeout):**
   - Khi User Service bị chậm (ví dụ mất 4 đến 10 giây do nghẽn database hoặc quá tải), Order Service phải giữ chặt luồng xử lý (thread hanging) để chờ đợi.
   - Hàng trăm client gọi đến sẽ chiếm sạch toàn bộ thread pool của Order Service $\rightarrow$ **Cạn kiệt tài nguyên và sập toàn bộ hệ thống theo dây chuyền (Cascading Failure)**.
-- 🟢 **Sau đó (Khi ĐÃ CÓ TimeLimiter bảo vệ):**
-  - TimeLimiter của Resilience4j đếm thời gian độc lập. Đúng **1.5 giây** nếu User Service chưa trả lời, TimeLimiter chủ động ngắt cuộc gọi ngay lập tức.
-  - Luồng của Order Service được giải phóng ngay, trả về cho client mã lỗi **`504 TIMEOUT`** trong 1500ms thay vì bắt chờ 4 giây.
+- 🟢 **Sau đó (Khi ĐÃ CÓ bảo vệ 2 tầng Timeout):**
+  - **Tầng 1 (OpenFeign ReadTimeout = 3000ms):** Gọi trực tiếp qua endpoint `/api/orders/resilience/feign-timeout/1`. Khi User Service bị ngâm 4s, Feign tự cắt sau 3s và trả mã **`504 FEIGN_TIMEOUT`**.
+  - **Tầng 2 (Resilience4j TimeLimiter = 1500ms):** Gọi qua endpoint `/api/orders/resilience/timeout/1`. TimeLimiter độc lập ngắt chờ sau **1.5 giây** để giải phóng luồng xử lý của Order Service sớm hơn.
 
 #### 2. Cách kiểm thử
 1. Tại khung **Chaos Injection Center**, bấm nút: **`⏱️ 2. Chậm 4s (Timeout)`**.
-2. Tại thẻ **Pattern 1**, bấm nút: **`▶ Bấm Test Timeout (TimeLimiter 1.5s)`**.
+2. Trên giao diện hoặc Swagger:
+   - **Thử Feign Timeout:** Gọi `GET /api/orders/resilience/feign-timeout/1` $\rightarrow$ Nhận kết quả sau ~3000ms.
+   - **Thử TimeLimiter:** Gọi `GET /api/orders/resilience/timeout/1` $\rightarrow$ Nhận kết quả ngắt sớm sau ~1500ms.
 
 #### 3. Kết quả kỳ vọng
-- **Mã HTTP:** `504 Gateway Timeout`.
-- **Thời gian phản hồi:** `~1505ms` (ngắt ngay ở mốc 1.5 giây, không đợi 4 giây).
-- **Thông báo:** *"TimeLimiter cắt: user-service không trả lời kịp"*.
+- **Feign Timeout:** Mã HTTP **`504`**, `outcome: FEIGN_TIMEOUT`, thời gian đo được `~3000ms`.
+- **TimeLimiter:** Mã HTTP **`504`**, `outcome: TIMEOUT`, thời gian đo được `~1500ms`.
+- **Lưu ý phân biệt lỗi:** Nếu User Service bị tắt hẳn (Connection Refused), hệ thống sẽ trả về mã `503 UPSTREAM_DOWN` thay vì timeout, giúp phân biệt rõ ràng giữa "mạng chậm" và "server sập".
 
 ---
 

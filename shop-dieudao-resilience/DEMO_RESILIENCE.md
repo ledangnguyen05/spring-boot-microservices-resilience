@@ -23,10 +23,11 @@ Cần JDK 17. Mở ba cửa sổ PowerShell tại thư mục `shop-dieudao-resil
 | Order Service | `.\mvnw.cmd -pl order-service spring-boot:run` | 8082 |
 | API Gateway   | `.\mvnw.cmd -pl api-gateway spring-boot:run`   | 8080 |
 
-### Mở hai tab Swagger
+### Mở các tab Swagger
 
 | Tab       | Mở trang                                                             | Tìm nhóm                 |
 | --------- | -------------------------------------------------------------------- | ------------------------ |
+| **Gateway Aggregator** | [Swagger API Gateway](http://localhost:8080/swagger-ui.html)         | Tập hợp API cả 2 service |
 | **User**  | [Swagger User Service](http://localhost:8081/swagger-ui/index.html)  | **Chaos API**            |
 | **Order** | [Swagger Order Service](http://localhost:8082/swagger-ui/index.html) | **Order Resilience API** |
 
@@ -72,11 +73,11 @@ Khi `order-service` gọi `user-service`, sự cố có thể xảy ra trước 
 | ----------------------------- | ----- | -------------------------------------------------------------------------------- | ------------------------------------------------- |
 | **1. Dọn cấu hình cũ**        | User  | `POST /api/chaos/reset`                                                          | Các giá trị giả lập về 0.                         |
 | **2. Tạo độ trễ 4 giây**      | User  | `POST /api/chaos`, nhập `delayMs = 4000`                                         | Phản hồi hiện `delayMs: 4000`.                    |
-| **3. Thử TimeLimiter**        | Order | `GET /api/orders/resilience/timeout/{userId}`, nhập `userId = 1`                 | HTTP **504**, `TIMEOUT`, khoảng **1,5 giây**.     |
-| **4. Thử Feign read timeout** | Order | `GET /api/orders/resilience/bulkhead/{userId}`, nhập `userId = 1` và bấm một lần | HTTP **504**, `FEIGN_TIMEOUT`, khoảng **3 giây**. |
+| **3. Thử TimeLimiter (Tầng 2)**   | Order | `GET /api/orders/resilience/timeout/{userId}`, nhập `userId = 1`                 | HTTP **504**, `TIMEOUT`, khoảng **1,5 giây**.     |
+| **4. Thử Feign read timeout (Tầng 1 - Topic chính)** | Order | `GET /api/orders/resilience/feign-timeout/{userId}`, nhập `userId = 1` | HTTP **504**, `FEIGN_TIMEOUT`, khoảng **3 giây**. |
 | **5. Bỏ độ trễ**              | User  | `POST /api/chaos/reset`                                                          | Phản hồi hiện `delayMs: 0`.                       |
 
-Hai lượt ở tab **Order** đều có `attempts: 1`. Bước 4 dùng đường dẫn Bulkhead vì khi gọi một lượt và còn suất, lời gọi được chuyển thẳng cho Feign để áp dụng read timeout. Độ trễ được tạo sau khi User Service nhận request, nên phép thử minh họa thời gian chờ phản hồi sau khi đã kết nối.
+Hai lượt ở tab **Order** đều có `attempts: 1`. Bước 4 gọi trực tiếp endpoint `GET /api/orders/resilience/feign-timeout/1` (gọi OpenFeign thuần không qua bất kỳ Decorator Resilience4j nào) để kiểm chứng chính xác ngưỡng `readTimeout = 3000ms` của Feign client khi User Service trễ 4 giây. Bước 3 cho thấy TimeLimiter (1.5s) can thiệp sớm hơn để giải phóng thread pool của Order Service.
 
 ## 2. Spring Retry / Resilience4j Retry
 

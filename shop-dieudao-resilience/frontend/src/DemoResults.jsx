@@ -5,12 +5,13 @@ const number = new Intl.NumberFormat('vi-VN');
 const milliseconds = (value) => value == null ? '—' : `${number.format(value)} ms`;
 const outcomeLabels = {
   OK: 'Thành công',
-  TIMEOUT: 'TimeLimiter hết giờ',
-  FEIGN_TIMEOUT: 'Feign hết giờ',
-  UPSTREAM_5XX: 'User Service trả lỗi',
-  UPSTREAM_4XX: 'User Service từ chối yêu cầu',
-  BULKHEAD_FULL: 'Hết suất xử lý',
-  CIRCUIT_OPEN: 'Mạch đang mở',
+  TIMEOUT: 'TimeLimiter hết giờ (1.5s)',
+  FEIGN_TIMEOUT: 'Feign hết giờ (3s)',
+  UPSTREAM_DOWN: 'User Service mất kết nối (Offline)',
+  UPSTREAM_5XX: 'User Service trả lỗi 5xx',
+  UPSTREAM_4XX: 'User Service từ chối yêu cầu 4xx',
+  BULKHEAD_FULL: 'Hết suất xử lý (429)',
+  CIRCUIT_OPEN: 'Mạch đang mở (Fail-fast)',
   FALLBACK: 'Dùng dữ liệu dự phòng',
 };
 const runLabels = {

@@ -12,21 +12,27 @@ const resilience = '/api/orders/resilience';
 
 const scenarios = [
   { id: 'normal', name: 'Bình thường', icon: CircleCheck, label: 'Dữ liệu đầy đủ', title: 'Xem đơn hàng #001',
+    chapter: 'KHỞI ĐỘNG',
     detail: 'Order Service đọc đơn hàng và lấy thông tin khách hàng tương ứng từ User Service.',
     condition: 'Không giả lập lỗi', action: 'Xem thông tin đơn hàng', question: 'Đơn hàng trả về dữ liệu gì?' },
-  { id: 'timeout', name: 'Timeout', icon: Clock3, label: 'Phản hồi chậm', title: 'Khách hàng đang chờ',
-    detail: 'Đo phản hồi trực tiếp sau khoảng 4 giây, rồi xem Feign và TimeLimiter dừng chờ ở mốc nào.',
+  { id: 'timeout', name: 'Timeout', icon: Clock3, label: 'Topic 1 · Feign Timeout', title: 'Khách hàng đang chờ',
+    chapter: 'CHỦ ĐỀ 01',
+    detail: 'Đo phản hồi trực tiếp sau khoảng 4 giây, rồi xem Feign (3s) và TimeLimiter (1.5s) dừng chờ ở mốc nào.',
     condition: 'Trễ 4 giây', action: 'So sánh thời gian chờ', question: 'Hệ thống chờ bao lâu?' },
-  { id: 'retry', name: 'Retry', icon: RefreshCw, label: 'Lỗi tạm thời', title: 'Lỗi hai lần rồi hồi phục',
-    detail: 'User Service trả lỗi ở hai lần gọi đầu. Order Service tự thử lại trong cùng một yêu cầu.',
+  { id: 'retry', name: 'Retry', icon: RefreshCw, label: 'Topic 2 · Lỗi tạm thời', title: 'Lỗi hai lần rồi hồi phục',
+    chapter: 'CHỦ ĐỀ 02',
+    detail: 'User Service trả lỗi ở hai lần gọi đầu. Order Service tự thử lại trong cùng một yêu cầu với Exponential Backoff.',
     condition: 'Hai lỗi HTTP 500', action: 'Thử lấy thông tin khách', question: 'Có thể tự thử lại không?' },
-  { id: 'bulkhead', name: 'Bulkhead', icon: Layers3, label: 'Lưu lượng tăng', title: 'Mười lượt đến cùng lúc',
-    detail: 'Mỗi lượt mất 2 giây. Order Service chỉ cấp ba suất gọi User Service đồng thời.',
+  { id: 'bulkhead', name: 'Bulkhead', icon: Layers3, label: 'Topic 3 · Lưu lượng tăng', title: 'Mười lượt đến cùng lúc',
+    chapter: 'CHỦ ĐỀ 03',
+    detail: 'Mỗi lượt mất 2 giây. Order Service chỉ cấp ba suất gọi User Service đồng thời, quá tải từ chối 429 ngay.',
     condition: '10 lượt · 3 suất', action: 'Gửi 10 lượt song song', question: 'Nhận được bao nhiêu lượt?' },
-  { id: 'breaker', name: 'Circuit Breaker', icon: Zap, label: 'Lỗi liên tục', title: 'Tạm ngừng gọi dịch vụ lỗi',
-    detail: 'User Service liên tục trả lỗi. Quan sát khi Order Service bắt đầu chặn các lời gọi mới.',
+  { id: 'breaker', name: 'Circuit Breaker', icon: Zap, label: 'Topic 4 · Lỗi liên tục', title: 'Tạm ngừng gọi dịch vụ lỗi',
+    chapter: 'CHỦ ĐỀ 04',
+    detail: 'User Service liên tục trả lỗi. Quan sát khi Order Service chuyển sang OPEN chặn đứng các lời gọi mới.',
     condition: '100% lỗi HTTP 500', action: 'Gửi 6 lượt liên tiếp', question: 'Khi nào nên ngừng gọi?' },
-  { id: 'fallback', name: 'Fallback', icon: ShieldCheck, label: 'Chế độ dự phòng', title: 'Vẫn có dữ liệu để hiển thị',
+  { id: 'fallback', name: 'Fallback & Kết hợp', icon: ShieldCheck, label: 'Bonus · Mở rộng', title: 'Vẫn có dữ liệu để hiển thị',
+    chapter: 'MỞ RỘNG (BONUS)',
     detail: 'So sánh phản hồi của luồng kết hợp khi bật và tắt dữ liệu khách hàng dự phòng.',
     condition: '100% lỗi HTTP 500', action: 'So sánh có và không dự phòng', question: 'Người dùng nhìn thấy gì?' },
 ];
@@ -156,7 +162,7 @@ export default function App() {
         case 'timeout': {
           const phases = [
             ['Gọi trực tiếp User Service', 4000, () => request(user + '/api/users/1')],
-            ['Đo Feign read timeout', 3000, () => callOrder(base, '/bulkhead/1')],
+            ['Đo Feign read timeout', 3000, () => callOrder(base, '/feign-timeout/1')],
             ['Đo Resilience4j TimeLimiter', 1500, () => callOrder(base, '/timeout/1')],
           ];
           const responses = [];
@@ -270,7 +276,7 @@ export default function App() {
 
           <section className="stage">
             <div className="stage-header">
-              <div className="stage-meta"><span className="chapter">KỊCH BẢN {String(selected + 1).padStart(2, '0')}</span><span className="condition"><i />{scenario.condition}</span></div>
+              <div className="stage-meta"><span className="chapter">{scenario.chapter ?? `KỊCH BẢN ${String(selected).padStart(2, '0')}`}</span><span className="condition"><i />{scenario.condition}</span></div>
               <h2>{scenario.title}</h2><p>{scenario.detail}</p>
               <div className="flow"><span><Package size={16} /> Order Service</span><ArrowRight size={17} aria-hidden="true" /><span className="flow-guard"><scenario.icon size={16} /> {scenario.id === 'normal' ? 'OpenFeign' : scenario.name}</span><ArrowRight size={17} aria-hidden="true" /><span><UserRound size={16} /> User Service</span></div>
               <div className="controls">

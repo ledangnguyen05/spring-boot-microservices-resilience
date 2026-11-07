@@ -12,6 +12,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.net.ConnectException;
+import java.net.SocketTimeoutException;
 import java.util.LinkedHashMap;
 import java.util.ArrayList;
 import java.util.List;
@@ -53,7 +55,19 @@ public class ResilienceDemoService {
     }
 
     // =====================================================================
-    // DEMO 1: TIMEOUT
+    // DEMO 1a: FEIGN TIMEOUT (Read Timeout 3s - Đúng chuẩn Topic 1)
+    // Gọi thẳng OpenFeign client không qua Decorator nào; khi User Service trễ 4s,
+    // Feign tự cắt sau 3s (readTimeout) và trả lỗi 504 FEIGN_TIMEOUT.
+    // =====================================================================
+    public DemoResult feignTimeout(Long userId) {
+        AtomicInteger attempts = new AtomicInteger();
+        return run("1a-FEIGN-TIMEOUT", attempts, false, userId, () -> {
+            return callUser("feign-timeout", userId, attempts);
+        });
+    }
+
+    // =====================================================================
+    // DEMO 1b: TIMEOUT (TimeLimiter 1.5s - Lớp bảo vệ thứ 2)
     // Vấn đề : user-service chậm -> thread của order-service bị treo chờ.
     // Giải pháp: TimeLimiter cắt sau demo.timeout.duration-ms (1.5s), trả lỗi 504 ngay.
     // Lưu ý  : TimeLimiter chỉ "bỏ chờ" - request bên dưới vẫn chạy tới khi Feign readTimeout (3s) cắt.
@@ -175,6 +189,7 @@ public class ResilienceDemoService {
     /** Chạy 1 demo theo tên (dùng cho /burst). */
     public DemoResult dispatch(String pattern, Long userId) {
         return switch (pattern) {
+            case "feign-timeout" -> feignTimeout(userId);
             case "timeout" -> timeout(userId);
             case "retry" -> retry(userId);
             case "bulkhead" -> bulkhead(userId);
@@ -182,7 +197,7 @@ public class ResilienceDemoService {
             case "combined" -> combined(userId, true);
             case "combined-nofallback" -> combined(userId, false);
             default -> throw new IllegalArgumentException(
-                    "pattern phải là: timeout | retry | bulkhead | circuit-breaker | combined | combined-nofallback");
+                    "pattern phải là: feign-timeout | timeout | retry | bulkhead | circuit-breaker | combined | combined-nofallback");
         };
     }
 
@@ -271,8 +286,32 @@ public class ResilienceDemoService {
                 outcome = "UPSTREAM_5XX"; status = 502;
                 msg = "user-service trả lỗi HTTP " + fe.status();
             } else if (fe.status() < 0) {
-                outcome = "FEIGN_TIMEOUT"; status = 504;
-                msg = "Feign không kết nối/đọc được (connect/read timeout): " + fe.getMessage();
+                Throwable cause = fe.getCause();
+                boolean isConnect = false;
+                boolean isSocketTimeout = false;
+                Throwable cur = cause;
+                while (cur != null) {
+                    if (cur instanceof ConnectException || (cur.getMessage() != null && cur.getMessage().contains("Connection refused"))) {
+                        isConnect = true;
+                        break;
+                    }
+                    if (cur instanceof SocketTimeoutException || (cur.getMessage() != null && cur.getMessage().toLowerCase().contains("timed out"))) {
+                        isSocketTimeout = true;
+                        break;
+                    }
+                    cur = cur.getCause();
+                }
+
+                if (isConnect) {
+                    outcome = "UPSTREAM_DOWN"; status = 503;
+                    msg = "Không thể kết nối đến User Service (Connection refused - server đang tắt hoặc sai cổng)";
+                } else if (isSocketTimeout) {
+                    outcome = "FEIGN_TIMEOUT"; status = 504;
+                    msg = "Feign read timeout: User Service không phản hồi kịp sau 3s (" + fe.getMessage() + ")";
+                } else {
+                    outcome = "FEIGN_TIMEOUT"; status = 504;
+                    msg = "Feign không kết nối/đọc được: " + fe.getMessage();
+                }
             } else {
                 outcome = "UPSTREAM_4XX"; status = 502;
                 msg = "user-service trả lỗi HTTP " + fe.status();

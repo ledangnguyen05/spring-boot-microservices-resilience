@@ -97,11 +97,66 @@ class ResiliencePatternsTest {
 
     @Test
     @DisplayName("Lỗi 4xx là lỗi phía client -> không retry và không làm hỏng CircuitBreaker")
-    void testClientErrorIgnored() {
-        Request req = Request.create(Request.HttpMethod.GET, "/api/users/1", Collections.emptyMap(), null, StandardCharsets.UTF_8, new RequestTemplate());
+    void testClientErrorIgnoredByRetryAndCircuitBreaker() {
+        Request req = Request.create(Request.HttpMethod.GET, "/api/users/999", Collections.emptyMap(), null, StandardCharsets.UTF_8, new RequestTemplate());
         FeignException.NotFound notFound = new FeignException.NotFound("User not found", req, null, null);
 
+        // 1. Kiểm tra nhận diện 4xx
         assertTrue(ResilienceKit.isClientError(notFound), "Lỗi 404 phải được nhận diện là client error");
+
+        // 2. Kiểm tra Retry KHÔNG retry với lỗi 4xx (chỉ gọi 1 lần rồi dừng)
+        Retry retry = kit.retryOnly();
+        AtomicInteger retryAttempts = new AtomicInteger();
+        assertThrows(FeignException.NotFound.class, () ->
+                Decorators.ofSupplier(() -> {
+                    retryAttempts.incrementAndGet();
+                    throw notFound;
+                }).withRetry(retry).get()
+        );
+        assertEquals(1, retryAttempts.get(), "Lỗi 4xx không được retry, chỉ gọi đúng 1 lần");
+
+        // 3. Kiểm tra CircuitBreaker KHÔNG ghi nhận failure khi gặp lỗi 4xx
+        CircuitBreaker cb = kit.cbOnly();
+        cb.reset();
+        assertEquals(CircuitBreaker.State.CLOSED, cb.getState());
+        for (int i = 0; i < 5; i++) {
+            assertThrows(FeignException.NotFound.class, () ->
+                    Decorators.ofSupplier(() -> {
+                        throw notFound;
+                    }).withCircuitBreaker(cb).get()
+            );
+        }
+        assertEquals(CircuitBreaker.State.CLOSED, cb.getState(), "CircuitBreaker vẫn phải CLOSED vì lỗi 4xx được ignore");
+        assertEquals(0, cb.getMetrics().getNumberOfFailedCalls(), "Số failed calls phải bằng 0 do 4xx được cấu hình ignore");
+    }
+
+    @Test
+    @DisplayName("Khi CircuitBreaker đang OPEN thì Retry không gọi lại (chống Retry Storm)")
+    void testCircuitBreakerOpenPreventsRetryStorm() {
+        CircuitBreaker cb = kit.cbOnly();
+        cb.reset();
+        cb.transitionToOpenState();
+        assertEquals(CircuitBreaker.State.OPEN, cb.getState(), "CircuitBreaker phải đang ở trạng thái OPEN");
+
+        Retry retry = kit.retryOnly();
+        AtomicInteger supplierCalls = new AtomicInteger();
+
+        Supplier<String> call = () -> {
+            supplierCalls.incrementAndGet();
+            return "SHOULD_NOT_EXECUTE";
+        };
+
+        // Lồng: Retry ở ngoài, CircuitBreaker ở trong
+        Supplier<String> decorated = Decorators.ofSupplier(call)
+                .withCircuitBreaker(cb)
+                .withRetry(retry)
+                .decorate();
+
+        // Lời gọi phải ném ngay CallNotPermittedException (fail-fast)
+        assertThrows(CallNotPermittedException.class, decorated::get);
+
+        // Supplier bên trong không bao giờ được chạm vào và Retry không gọi lại
+        assertEquals(0, supplierCalls.get(), "Khi CB đang OPEN, method không được gọi và Retry không thử lại");
     }
 }
 
