@@ -134,7 +134,8 @@ function ResultTable({ scenario, result }) {
   }
 
   if (scenario === 'bulkhead') {
-    const { body, status } = result;
+    const { body, status, _stagedResults } = result;
+    const displayResults = _stagedResults || body.requestResults || [];
     return <><div className="table-frame" tabIndex={0} role="region" aria-label="Bảng tổng hợp Bulkhead">
       <table className="result-table">
         <caption>{body.parallelRequests} lượt song song · HTTP {status} cho API tổng hợp · {milliseconds(body.totalMs)}</caption>
@@ -144,14 +145,17 @@ function ResultTable({ scenario, result }) {
         ))}</tbody>
       </table>
     </div>
-      {body.requestResults?.length
-        ? <CallDetails rows={body.requestResults} />
+      {displayResults.length > 0
+        ? <CallDetails rows={displayResults} />
         : <p className="note">Cần khởi động lại Order Service với bản mới để xem từng lượt.</p>}
     </>;
   }
 
   const responses = Array.isArray(result) ? result : [result];
   const showCustomer = scenario === 'retry' || scenario === 'fallback';
+  const stagedAttempts = result._stagedAttempts || result.body?.attemptResults;
+  const showSummaryRow = result._stagedSummary !== false;
+
   return <><div className="table-frame" tabIndex={0} role="region" aria-label="Bảng phản hồi API">
     <table className="result-table">
       <thead><tr>
@@ -159,20 +163,33 @@ function ResultTable({ scenario, result }) {
         <th scope="col">Thời gian</th><th scope="col">Số lần gọi User</th>
         {showCustomer && <th scope="col">Khách hàng</th>}
       </tr></thead>
-      <tbody>{responses.map(({ body, status, measuredMs }, index) => (
-        <tr key={index}>
-          <th scope="row">{runLabels[scenario]?.[index] ?? (index < 6 ? `Lượt ${index + 1}` : `Thăm dò ${index - 5}`)}</th>
-          <td><span className={`http-code ${status < 400 ? 'http-ok' : 'http-error'}`}>{status}</span></td>
-          <td>{outcomeLabels[body?.outcome] ?? body?.outcome ?? (status === 200 ? 'Đã nhận dữ liệu' : 'Yêu cầu thất bại')}</td>
-          <td className="numeric">{milliseconds(measuredMs ?? body?.elapsedMs)}</td>
-          <td className="numeric">{body?.attempts ?? '—'}</td>
-          {showCustomer && <td>{body.user?.name ?? '—'}{body.user?.address && <small>{body.user.address}</small>}</td>}
-        </tr>
-      ))}</tbody>
+      <tbody>
+        {showSummaryRow ? (
+          responses.map(({ body, status, measuredMs }, index) => (
+            <tr key={index}>
+              <th scope="row">{runLabels[scenario]?.[index] ?? (index < 6 ? `Lượt ${index + 1}` : `Thăm dò ${index - 5}`)}</th>
+              <td><span className={`http-code ${status < 400 ? 'http-ok' : 'http-error'}`}>{status}</span></td>
+              <td>{outcomeLabels[body?.outcome] ?? body?.outcome ?? (status === 200 ? 'Đã nhận dữ liệu' : 'Yêu cầu thất bại')}</td>
+              <td className="numeric">{milliseconds(measuredMs ?? body?.elapsedMs)}</td>
+              <td className="numeric">{body?.attempts ?? '—'}</td>
+              {showCustomer && <td>{body.user?.name ?? '—'}{body.user?.address && <small>{body.user.address}</small>}</td>}
+            </tr>
+          ))
+        ) : (
+          <tr>
+            <th scope="row">Tra cứu khách hàng</th>
+            <td><span className="http-code http-warn">Đang thử lại…</span></td>
+            <td>Đang tự thử lại qua Resilience4j Retry…</td>
+            <td className="numeric">Đang đo…</td>
+            <td className="numeric">{stagedAttempts?.length ?? 1} / 3</td>
+            {showCustomer && <td>Đang chờ phản hồi…</td>}
+          </tr>
+        )}
+      </tbody>
     </table>
   </div>
-    {scenario === 'retry' && (result.body.attemptResults?.length
-      ? <CallDetails rows={result.body.attemptResults} retry />
+    {scenario === 'retry' && (stagedAttempts?.length
+      ? <CallDetails rows={stagedAttempts} retry />
       : <p className="note">Cần khởi động lại Order Service với bản mới để xem từng lần thử.</p>)}
   </>;
 }

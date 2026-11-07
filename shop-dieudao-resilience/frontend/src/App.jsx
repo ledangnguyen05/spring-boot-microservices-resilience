@@ -77,6 +77,7 @@ export default function App() {
   const [error, setError] = useState('');
   const [route, setRoute] = useState(null);
   const [needsRecovery, setNeedsRecovery] = useState(false);
+  const [runCount, setRunCount] = useState(0);
   const running = useRef(false);
   const scenario = scenarios[selected];
   const lesson = lessons[scenario.id];
@@ -114,6 +115,7 @@ export default function App() {
     setError('');
     setRoute(null);
     setNeedsRecovery(false);
+    setRunCount(0);
   }
 
   async function readBreaker(baseUrl) {
@@ -150,6 +152,7 @@ export default function App() {
     setClock(null);
     setNeedsRecovery(false);
     setRoute(base);
+    setRunCount((prev) => prev + 1);
     return perform(async () => {
       await requireOk(user + '/api/chaos/reset', 'POST');
       if (['breaker', 'fallback', 'converge'].includes(scenario.id)) {
@@ -164,10 +167,12 @@ export default function App() {
 
       switch (scenario.id) {
         case 'normal': {
+          setStage('Đang gọi API đơn hàng…');
           const response = await request(base + '/api/orders/1');
           if (!response.body || (response.status === 200 && response.body.orderId !== 1)) {
             throw new Error(`Order Service trả phản hồi ngoài kịch bản (HTTP ${response.status}).`);
           }
+          await pause(300);
           setResult(response);
           break;
         }
@@ -189,24 +194,61 @@ export default function App() {
               setClock(null);
             }
             setResult([...responses]);
-            await pause(300);
+            await pause(450);
           }
           break;
         }
-        case 'retry':
-          setStage('Đang chờ Order Service xử lý và thử lại…');
-          setResult(await callOrder(base, '/retry/1'));
+        case 'retry': {
+          setStage('Lần 1: Đang gọi User Service…');
+          const callPromise = callOrder(base, '/retry/1');
+          const response = await callPromise;
+          const attempts = response.body?.attemptResults ?? [];
+          if (attempts.length >= 3) {
+            setStage('Lần 1: User Service trả lỗi 500. Đang chờ 500ms (Exponential Backoff)…');
+            setResult({ ...response, _stagedAttempts: [attempts[0]], _stagedSummary: false });
+            await pause(700);
+
+            setStage('Lần 2: User Service vẫn lỗi 500. Đang chờ 1000ms…');
+            setResult({ ...response, _stagedAttempts: [attempts[0], attempts[1]], _stagedSummary: false });
+            await pause(950);
+
+            setStage('Lần 3: User Service đã phục hồi, trả dữ liệu 200 OK!');
+            setResult({ ...response, _stagedAttempts: attempts, _stagedSummary: false });
+            await pause(500);
+
+            setResult({ ...response, _stagedAttempts: attempts, _stagedSummary: true });
+          } else {
+            setResult(response);
+          }
           break;
-        case 'bulkhead':
-          setStage('Đang gửi 10 lượt và thu kết quả từng lượt…');
-          setResult(await callOrder(base, '/burst/bulkhead?n=10'));
+        }
+        case 'bulkhead': {
+          setStage('Đang gửi 10 lượt song song vào Order Service…');
+          const response = await callOrder(base, '/burst/bulkhead?n=10');
+          const results = response.body?.requestResults ?? [];
+          const rejected = results.filter((r) => r.httpStatus === 429);
+          const accepted = results.filter((r) => r.httpStatus === 200);
+
+          if (rejected.length > 0 && accepted.length > 0) {
+            setStage('7 lượt quá tải bị vách ngăn Bulkhead từ chối ngay tức thì (429)…');
+            setResult({ ...response, _stagedResults: rejected });
+            await pause(900);
+
+            setStage('3 lượt trong hạn ngạch đã hoàn tất xử lý (200 OK)!');
+            setResult({ ...response, _stagedResults: [...rejected, ...accepted] });
+          } else {
+            setResult(response);
+          }
           break;
+        }
         case 'breaker': {
           const calls = [];
           for (let index = 1; index <= 6; index += 1) {
             setStage(`Đang gửi lượt ${index}/6…`);
-            calls.push(await callOrder(base, '/circuit-breaker/1'));
+            const res = await callOrder(base, '/circuit-breaker/1');
+            calls.push(res);
             setResult([...calls]);
+            await pause(450);
           }
           await readBreaker(base);
           setNeedsRecovery(true);
@@ -222,6 +264,7 @@ export default function App() {
             const response = await callOrder(base, path);
             phases.push({ ...response, measuredMs: Math.round(performance.now() - start), phase });
             setResult([...phases]);
+            await pause(600);
           };
           await step('Pha 1/5 · Bulkhead: gửi 6 lượt song song (lọc bão tải)…', 'delayMs=600', '/burst/converge?n=6',
             { title: 'Pha 1 · Lọc bão lưu lượng', topics: 'Bulkhead', expect: '3 suất cấp phép (200 OK), 3 lượt quá tải bị từ chối (429)', statusDesc: 'Thành công lọc tải' });
@@ -264,6 +307,7 @@ export default function App() {
           setStage('Đang gọi khi tắt dữ liệu dự phòng…');
           const noFallback = await callOrder(base, '/combined/1?fallback=false');
           setResult([noFallback]);
+          await pause(600);
           await requireOk(base + resilience + '/reset', 'POST');
           setStage('Đang gọi khi bật dữ liệu dự phòng…');
           const withFallback = await callOrder(base, '/combined/1?fallback=true');
@@ -291,6 +335,7 @@ export default function App() {
         setStage(`Đang gửi lượt thăm dò ${index + 1}/2…`);
         calls.push(await callOrder(target, '/circuit-breaker/1'));
         setResult([...calls]);
+        await pause(450);
       }
       await readBreaker(target);
       setNeedsRecovery(false);
@@ -348,12 +393,6 @@ export default function App() {
               <div className="stage-meta"><span className="chapter">{scenario.chapter ?? `KỊCH BẢN ${String(selected).padStart(2, '0')}`}</span><span className="condition"><i />{scenario.condition}</span></div>
               <h2>{scenario.title}</h2><p>{scenario.detail}</p>
               <div className="flow"><span><Package size={16} /> Order Service</span><ArrowRight size={17} aria-hidden="true" /><span className="flow-guard"><scenario.icon size={16} /> {scenario.id === 'normal' ? 'OpenFeign' : scenario.name}</span><ArrowRight size={17} aria-hidden="true" /><span><UserRound size={16} /> User Service</span></div>
-              <FlowVisualizer
-                scenarioId={scenario.id}
-                busy={busy}
-                liveStage={stage}
-                breakerState={scenario.id === 'converge' ? convergeBreaker : breaker}
-              />
               {lesson && (
                 <div className="knowledge-panel">
                   <div className="knowledge-card">
@@ -393,8 +432,16 @@ export default function App() {
             </div>
 
             <div className="stage-results">
-              <div className="result-heading"><div><div className="section-label">KẾT QUẢ ĐO ĐẠC</div><h3>{scenario.question}</h3></div>{route && <span className="route">{route === gateway ? 'Qua Gateway' : 'Gọi trực tiếp'}</span>}</div>
+              <div className="result-heading"><div><div className="section-label">MÔ PHỎNG & KẾT QUẢ ĐO ĐẠC</div><h3>{scenario.question}</h3></div>{route && <span className="route">{route === gateway ? 'Qua Gateway' : 'Gọi trực tiếp'}</span>}</div>
               {clock && <TimeoutClock key={clock.start} clock={clock} />}
+              <FlowVisualizer
+                scenarioId={scenario.id}
+                busy={busy}
+                liveStage={stage}
+                breakerState={scenario.id === 'converge' ? convergeBreaker : breaker}
+                runCount={runCount}
+                actionLabel={scenario.action}
+              />
               <div aria-live="polite" aria-busy={busy}>
                 <DemoResults scenario={scenario.id} result={result} breaker={scenario.id === 'converge' ? convergeBreaker : breaker} busy={busy} error={error} view={resultView} onViewChange={setResultView} />
               </div>

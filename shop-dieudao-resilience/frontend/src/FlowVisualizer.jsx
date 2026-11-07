@@ -4,9 +4,10 @@ import {
   Activity, ArrowRight, ShieldCheck, CheckCircle2, AlertTriangle
 } from 'lucide-react';
 
-export default function FlowVisualizer({ scenarioId, busy, liveStage, breakerState }) {
+export default function FlowVisualizer({ scenarioId, busy, liveStage, breakerState, runCount = 0, actionLabel = 'Chạy kịch bản' }) {
   const canvasRef = useRef(null);
   const [isPlaying, setIsPlaying] = useState(true);
+  const [manualPreview, setManualPreview] = useState(false);
   const [currentNarrative, setCurrentNarrative] = useState({
     phase: 'Bắt đầu',
     action: 'Đang chuẩn bị',
@@ -31,7 +32,19 @@ export default function FlowVisualizer({ scenarioId, busy, liveStage, breakerSta
   useEffect(() => {
     animTimeRef.current = 0;
     setIsPlaying(true);
+    setManualPreview(false);
   }, [scenarioId]);
+
+  // Triggered when user clicks Run button
+  useEffect(() => {
+    if (runCount > 0) {
+      animTimeRef.current = 0;
+      setIsPlaying(true);
+      setManualPreview(true);
+    }
+  }, [runCount]);
+
+  const showCanvas = runCount > 0 || busy || manualPreview;
 
   // Handle Canvas Rendering Engine
   useEffect(() => {
@@ -898,46 +911,65 @@ export default function FlowVisualizer({ scenarioId, busy, liveStage, breakerSta
           <span>MÔ PHỎNG CHUYỂN ĐỘNG LIÊN TỤC 60 FPS (FLUID REQUEST MOTION)</span>
         </div>
         <div className="visualizer-controls">
-          <span className="live-badge" style={{ color: currentNarrative.statusColor, borderColor: currentNarrative.statusColor }}>
-            ● {currentNarrative.code}
+          <span className="live-badge" style={{ color: showCanvas ? currentNarrative.statusColor : '#94a3b8', borderColor: showCanvas ? currentNarrative.statusColor : '#475569' }}>
+            ● {showCanvas ? currentNarrative.code : 'CHỜ LỆNH'}
           </span>
-          <button
-            className={`vis-btn play-btn ${isPlaying ? 'active' : ''}`}
-            onClick={() => setIsPlaying(!isPlaying)}
-            title={isPlaying ? 'Tạm dừng chuyển động' : 'Tiếp tục phát'}
-          >
-            {isPlaying ? <Pause size={14} /> : <Play size={14} />}
-            <span>{isPlaying ? 'Tạm dừng' : 'Phát chuyển động'}</span>
-          </button>
-          <button className="vis-btn" onClick={handleReplay} title="Chạy lại từ đầu">
-            <RotateCcw size={14} />
-            <span>Phát lại</span>
-          </button>
+          {showCanvas && (
+            <>
+              <button
+                className={`vis-btn play-btn ${isPlaying ? 'active' : ''}`}
+                onClick={() => setIsPlaying(!isPlaying)}
+                title={isPlaying ? 'Tạm dừng chuyển động' : 'Tiếp tục phát'}
+              >
+                {isPlaying ? <Pause size={14} /> : <Play size={14} />}
+                <span>{isPlaying ? 'Tạm dừng' : 'Phát chuyển động'}</span>
+              </button>
+              <button className="vis-btn" onClick={handleReplay} title="Chạy lại từ đầu">
+                <RotateCcw size={14} />
+                <span>Phát lại</span>
+              </button>
+            </>
+          )}
         </div>
       </div>
 
-      {/* Fluid Canvas Stage */}
-      <div className="canvas-wrapper">
-        <canvas ref={canvasRef} className="flow-canvas" />
-      </div>
+      {/* Standby Banner or Fluid Canvas Stage */}
+      {!showCanvas ? (
+        <div className="visualizer-standby">
+          <div className="standby-icon"><Activity size={24} /></div>
+          <div className="standby-text">
+            <strong>Mô phỏng chuyển động đang chờ lệnh</strong>
+            <p>Bấm nút <strong>&quot;{actionLabel}&quot;</strong> ở trên để khởi chạy chuyển động hạt request và xem kết quả đổ về từng bước trên bảng.</p>
+          </div>
+          <button className="vis-btn play-btn" onClick={() => setManualPreview(true)}>
+            <Play size={14} /> <span>Xem trước chuyển động</span>
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="canvas-wrapper">
+            <canvas ref={canvasRef} className="flow-canvas" />
+          </div>
 
-      {/* Live Continuous Narration Card */}
-      <div className="flow-explanation-card">
-        <div className="step-badge-row">
-          <span className="step-pill" style={{ backgroundColor: currentNarrative.statusColor + '25', color: currentNarrative.statusColor, borderColor: currentNarrative.statusColor }}>
-            {currentNarrative.phase}
-          </span>
-          <span className="step-action-tag">
-            <ArrowRight size={13} /> {currentNarrative.action}
-          </span>
-        </div>
-        <p className="step-desc" style={{ fontSize: '0.92rem', color: '#f1f5f9', fontWeight: 600 }}>
-          {currentNarrative.desc}
-        </p>
-        <div className="step-resilience-box" style={{ borderLeftColor: currentNarrative.statusColor }}>
-          <strong>Bản chất kiên cường:</strong> {currentNarrative.resilience}
-        </div>
-      </div>
+          {/* Live Continuous Narration Card */}
+          <div className="flow-explanation-card">
+            <div className="step-badge-row">
+              <span className="step-pill" style={{ backgroundColor: currentNarrative.statusColor + '25', color: currentNarrative.statusColor, borderColor: currentNarrative.statusColor }}>
+                {currentNarrative.phase}
+              </span>
+              <span className="step-action-tag">
+                <ArrowRight size={13} /> {currentNarrative.action}
+              </span>
+            </div>
+            <p className="step-desc" style={{ fontSize: '0.92rem', color: '#f1f5f9', fontWeight: 600 }}>
+              {currentNarrative.desc}
+            </p>
+            <div className="step-resilience-box" style={{ borderLeftColor: currentNarrative.statusColor }}>
+              <strong>Bản chất kiên cường:</strong> {currentNarrative.resilience}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
