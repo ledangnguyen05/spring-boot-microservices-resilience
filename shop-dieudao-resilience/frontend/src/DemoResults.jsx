@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Activity, Clock3, FileJson, ListChecks, Table2 } from 'lucide-react';
+import { lessons } from './demoLessons.js';
 
 const number = new Intl.NumberFormat('vi-VN');
 const milliseconds = (value) => value == null ? '—' : `${number.format(value)} ms`;
@@ -171,7 +172,7 @@ function summarize(scenario, result, breaker) {
     const { body: limiter, measuredMs: limiterMs } = limiterRun;
     const difference = feignMs - limiterMs;
     if (feign.outcome === 'FEIGN_TIMEOUT' && limiter.outcome === 'TIMEOUT' && difference > 0) {
-      return `Trình duyệt nhận HTTP ${direct.status} từ User Service sau ${milliseconds(direct.measuredMs)}. Qua Order Service, TimeLimiter trả lỗi sớm hơn Feign ${milliseconds(difference)}.`;
+      return `Gọi trực tiếp nhận HTTP ${direct.status} sau ${milliseconds(direct.measuredMs)}. Qua Order Service, cả hai lượt đều trả HTTP 504, nhưng TimeLimiter giúp người dùng nhận phản hồi sớm hơn Feign ${milliseconds(difference)}.`;
     }
     return `Feign trả ${feign.outcome} sau ${milliseconds(feignMs)}. TimeLimiter trả ${limiter.outcome} sau ${milliseconds(limiterMs)}. Kết quả chưa cho thấy TimeLimiter hết giờ trước Feign.`;
   }
@@ -196,6 +197,10 @@ function summarize(scenario, result, breaker) {
     const probes = result.slice(6);
     if (probes.length === 2 && probes.every(({ body }) => body.outcome === 'OK') && breaker === 'CLOSED') {
       return 'Hai lượt thăm dò đều thành công. Mạch đã đóng và cho phép các lượt tiếp theo đi qua.';
+    }
+    if (probes.length === 2) {
+      const successful = probes.filter(({ body }) => body.outcome === 'OK').length;
+      return `Có ${successful}/2 lượt thăm dò thành công.${breaker ? ` Trạng thái hiện tại là ${breaker}.` : ''}`;
     }
     const summary = blocked > 0
       ? `Circuit Breaker đã chặn ${blocked} lượt tại Order Service. Những lượt này không gọi sang User Service.`
@@ -254,12 +259,14 @@ function describeProcess(scenario, result, breaker) {
       ];
     case 'breaker': {
       const blocked = result.findIndex(({ body }) => body.outcome === 'CIRCUIT_OPEN' && body.attempts === 0);
-      const steps = ['Circuit Breaker ghi nhận kết quả các lời gọi. Với cấu hình mặc định, mạch cần 5 mẫu và mở khi tỷ lệ lỗi đạt ít nhất 50%.'];
-      if (blocked >= 0) steps.push(`Ở lượt ${blocked + 1}, mạch từ chối yêu cầu ngay tại Order Service. Bảng cho thấy số lần gọi User bằng 0.`);
+      const firstFiveFailed = result.length >= 5 && result.slice(0, 5).every(({ body }) => body.outcome === 'UPSTREAM_5XX');
+      const steps = [firstFiveFailed && blocked === 5
+        ? 'Năm lượt đầu đi qua khi mạch còn CLOSED. Cả năm đều gặp lỗi, nên tỷ lệ lỗi 100% vượt ngưỡng 50% và mạch chuyển sang OPEN.'
+        : 'Circuit Breaker ghi nhận kết quả các lời gọi. Với cấu hình mặc định, mạch cần 5 mẫu và mở khi tỷ lệ lỗi đạt ít nhất 50%.'];
+      if (blocked >= 0) steps.push(`Lượt ${blocked + 1} đến khi mạch đang OPEN. Order Service trả HTTP 503 ngay, với 0 lần gọi User.`);
+      if (blocked >= 0) steps.push('Sau khoảng 10 giây, mạch tự chuyển sang HALF_OPEN. Lúc này chỉ một số lượt được phép đi qua để kiểm tra dịch vụ.');
       if (result.length === 8 && result.slice(6).every(({ body }) => body.outcome === 'OK') && breaker === 'CLOSED') {
-        steps.push('Sau khi User Service được khôi phục, mạch cho hai lượt thăm dò đi qua. Cả hai thành công nên mạch trở lại CLOSED.');
-      } else if (blocked >= 0) {
-        steps.push('Sau thời gian chờ, mạch chuyển sang HALF_OPEN để cho phép các lượt thăm dò.');
+        steps.push('Demo đã khôi phục User Service trước khi gửi thăm dò. Cả hai lượt được phép gọi thật, đều nhận HTTP 200 và mạch trở lại CLOSED.');
       }
       return steps;
     }
@@ -304,6 +311,9 @@ export default function DemoResults({ scenario, result, breaker, busy, error, vi
         <h4>Kết luận</h4>
         {steps.length > 0 && <ol>{steps.map((step) => <li key={step}>{step}</li>)}</ol>}
         <p>{busy ? 'Đang chờ các lượt gọi hoàn tất.' : error ? 'Kịch bản gặp lỗi khi chạy. Bên trên là các phản hồi đã nhận.' : summarize(scenario, result, breaker)}</p>
+        {!busy && !error && lessons[scenario]?.takeaway && (
+          <p className="takeaway"><strong>Ý nghĩa cốt lõi:</strong> {lessons[scenario].takeaway}</p>
+        )}
       </div>
     </div>
   </>;

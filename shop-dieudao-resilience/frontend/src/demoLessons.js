@@ -1,0 +1,89 @@
+export const lessons = {
+  normal: {
+    goal: 'Lấy một đơn hàng thành công để có kết quả chuẩn trước khi tạo sự cố.',
+    mainPurpose: 'Kiểm tra luồng gọi microservice thông thường trong điều kiện lý tưởng: Order Service gọi User Service lấy thông tin khách hàng và trả về đơn hàng đầy đủ.',
+    steps: ['Đọc đơn hàng #001', 'Tra thông tin khách', 'Trả dữ liệu đơn và khách'],
+    takeaway: 'Dùng kết quả này làm mốc đối chiếu khi các bài sau trả lỗi hoặc trả dữ liệu dự phòng.',
+    terms: [
+      ['Order Service', 'Quản lý đơn hàng. Đơn có mã khách, sản phẩm và trạng thái.'],
+      ['User Service', 'Quản lý thông tin khách hàng, chẳng hạn tên và địa chỉ. Order Service tra thông tin này bằng mã khách trên đơn.'],
+    ],
+  },
+  timeout: {
+    goal: 'Giữ cùng độ trễ 4 giây để thấy giới hạn ở mỗi tầng ảnh hưởng thế nào đến thời gian người dùng phải chờ.',
+    mainPurpose: 'Thiết lập giới hạn thời gian chờ tối đa ở tầng HTTP client (OpenFeign / RestClient) và tầng ứng dụng (TimeLimiter). Khi downstream phản hồi chậm hoặc bị treo, client chủ động ngắt kết nối socket, ngay lập tức giải phóng thread pool và kết nối cho Order Service, ngăn chặn sự cố cạn kiệt luồng và sập dây chuyền (Cascading Failure).',
+    steps: ['Đo User Service trực tiếp (trễ 4s)', 'Đo Feign read timeout (ngắt ở 3s)', 'Đo Resilience4j TimeLimiter (ngắt ở 1,5s)'],
+    takeaway: 'So sánh cho thấy tầng nào dừng chờ trước với cấu hình hiện tại. Giới hạn ngắn giúp trả lỗi sớm, nhưng cần đủ thời gian cho các phản hồi hợp lệ.',
+    terms: [
+      ['Feign / RestClient', 'Hai cách gọi HTTP từ Java. Feign khai báo lời gọi bằng interface (@FeignClient), còn RestClient gọi bằng các phương thức Java. Demo chạy Feign.'],
+      ['Connect timeout', 'Giới hạn thời gian tối đa để mở kết nối TCP mới. Bài này giả lập phản hồi chậm sau khi kết nối đã mở.'],
+      ['Read timeout', 'Giới hạn thời gian chờ dữ liệu phản hồi ở tầng HTTP. Feign trong demo đặt ngưỡng đọc 3 giây.'],
+      ['Resilience4j TimeLimiter', 'Giới hạn thời gian Order Service chờ kết quả của tác vụ ở tầng ứng dụng (đặt 1,5 giây) để giải phóng luồng sớm hơn.'],
+      ['HTTP 504', 'Mã lỗi Gateway Timeout trả về khi một trong các tầng timeout ngắt việc chờ (FEIGN_TIMEOUT hoặc TIMEOUT).'],
+    ],
+  },
+  retry: {
+    goal: 'Kiểm tra một yêu cầu của người dùng có thể vượt qua lỗi tạm thời nhờ tự thử lại hay không.',
+    mainPurpose: 'Tự động gửi lại yêu cầu khi gặp các sự cố mạng chập chờn hoặc gián đoạn thoáng qua (transient faults, HTTP 500) và áp dụng khoảng nghỉ tăng dần (Exponential Backoff). Giúp giao dịch tự cứu vãn thành công trong suốt với người dùng, đồng thời kiểm soát tần suất thử lại để không gây quá tải thêm cho đối tác (chống Retry Storm).',
+    steps: ['Gửi một yêu cầu từ giao diện', 'User Service lỗi hai lần đầu', 'Đọc kết quả lần thử cuối (thành công ở lần 3)'],
+    takeaway: 'Xem cả bảng từng lần gọi và mã HTTP cuối. Một yêu cầu vẫn có thể thành công sau lỗi tạm thời. Đổi lại, người dùng phải chờ thêm các lần thử và khoảng nghỉ giữa chúng.',
+    terms: [
+      ['Spring Retry / Resilience4j Retry', 'Hai thư viện áp dụng chính sách thử lại. Spring Retry có @Retryable hoặc RetryTemplate. Demo chạy Resilience4j Retry để bọc lời gọi Feign.'],
+      ['Retry', 'Thử lại một thao tác khi gặp loại lỗi đã chọn và vẫn còn lượt. Demo cho tối đa 3 lần gọi, tính cả lần đầu.'],
+      ['Backoff / Exponential Backoff', 'Khoảng nghỉ tăng dần trước khi gọi lại. Demo chờ 500 ms rồi 1.000 ms để các lần thử không dồn sát nhau.'],
+      ['Retry Storm', 'Hiểm họa hàng triệu client cùng ồ ạt thử lại, biến lỗi mạng nhỏ thành sự cố sập toàn diện dịch vụ phía sau.'],
+      ['Số lần gọi (attempts)', 'Số lượt thực tế gọi sang User Service được ghi nhận trên bảng kết quả (tối đa 3 lần).'],
+    ],
+  },
+  bulkhead: {
+    goal: 'Kiểm tra Order Service giới hạn bao nhiêu lời gọi cùng lúc khi nhiều người cùng truy cập.',
+    mainPurpose: 'Cô lập tài nguyên và giới hạn số lượng cuộc gọi đồng thời tối đa (maxConcurrentCalls) được phép truy cập vào một dịch vụ downstream. Khi lượng truy cập tăng vọt vượt ngưỡng, Bulkhead từ chối ngay lập tức (fail-fast HTTP 429 trong vài ms) để bảo vệ thread pool của Order Service không bị chiếm dụng trọn bộ và bảo vệ downstream khỏi quá tải.',
+    steps: ['Gửi 10 lượt song song (mỗi lượt chiếm luồng 2s)', 'Mỗi lượt xin một suất trong bộ đếm', 'Cấp 3 suất xử lý, từ chối ngay 7 lượt vượt ngưỡng'],
+    takeaway: 'Nhìn cột Số lần gọi User. Lượt bị chặn vì hết suất có giá trị 0, cho thấy giới hạn đã bảo vệ dịch vụ phía sau khỏi nhận thêm tải.',
+    terms: [
+      ['Resilience4j Bulkhead', 'Giới hạn số công việc đang xử lý đồng thời để cô lập tài nguyên cho từng dịch vụ.'],
+      ['Semaphore', 'Mỗi lượt phải lấy một suất. Demo có 3 suất và từ chối ngay khi hết chỗ. Khi một lượt xong, suất được trả để lượt khác dùng.'],
+      ['HTTP 429', 'Mã của từng lượt bị từ chối ngay vì hết suất xử lý. Lượt bị chặn có số lần gọi User = 0.'],
+      ['maxConcurrentCalls', 'Ngưỡng cuộc gọi đồng thời tối đa được chấp nhận tại một thời điểm (demo đặt là 3).'],
+    ],
+  },
+  breaker: {
+    goal: 'Kiểm tra mạch có ngừng gửi thêm yêu cầu khi User Service lỗi liên tục và có tự cho gọi lại khi dịch vụ phục hồi hay không.',
+    mainPurpose: 'Đóng vai trò cầu dao ngắt mạch thông minh, liên tục theo dõi tỷ lệ thất bại của downstream trong một cửa sổ trượt. Khi tỷ lệ lỗi vượt ngưỡng cho phép (≥ 50%), mạch tự động chuyển sang OPEN để lập tức từ chối mọi yêu cầu mới trong 0ms (HTTP 503) mà không cần gọi downstream; sau đó tự động chuyển sang HALF_OPEN để thăm dò và khôi phục khi dịch vụ phía sau đã bình thường trở lại.',
+    steps: ['Gửi 6 lượt khi User Service đang lỗi 100%', 'Mạch đếm 5 mẫu lỗi và chuyển sang OPEN ở lượt 6', 'Khôi phục dịch vụ, chờ 10s để mạch sang HALF_OPEN', 'Gửi 2 lượt thăm dò thành công đưa mạch về CLOSED'],
+    takeaway: 'Lượt thứ sáu và lượt thăm dò dùng cùng API. Kết quả khác nhau vì chúng đến ở hai trạng thái khác nhau của mạch và User Service đã được khôi phục trước khi thăm dò.',
+    terms: [
+      ['Resilience4j Circuit Breaker', 'Một cầu dao phần mềm dựa vào kết quả các lời gọi gần đây để quyết định có chuyển yêu cầu tiếp theo đến User Service hay không.'],
+      ['CLOSED · Cho gọi', 'Năm lượt đầu vẫn tới User Service và nhận lỗi. Khi đủ 5 mẫu, tỷ lệ lỗi 100% vượt ngưỡng 50%, nên mạch mở.'],
+      ['OPEN · Tạm chặn', 'Lượt thứ sáu đến ngay sau khi mạch mở nên Order Service trả HTTP 503 trong 0ms với 0 lần gọi User. Mạch giữ trạng thái này 10 giây để giảm tải cho dịch vụ lỗi.'],
+      ['HALF_OPEN · Gọi thăm dò', 'Hết thời gian chờ, mạch tự cho qua tối đa 2 lượt để kiểm tra. Hai lượt thành công đưa mạch về CLOSED. Một lượt lỗi trong hai lượt chạm ngưỡng 50% và làm mạch mở lại.'],
+      ['Sliding Window', 'Cửa sổ trượt ghi nhận kết quả các cuộc gọi gần nhất (demo cấu hình 5 cuộc gọi) để tính tỷ lệ thất bại.'],
+    ],
+  },
+  converge: {
+    goal: 'Kiểm chứng chuỗi xử lý đơn hàng thực tế khi cả 4 cơ chế cùng phối hợp bảo vệ 1 lời gọi duy nhất qua 4 pha liên tiếp.',
+    mainPurpose: 'Thiết lập kiến trúc phòng thủ đa tầng phối hợp nhịp nhàng: Bulkhead giới hạn lưu lượng đồng thời ➔ Feign Timeout cắt đứt trễ ➔ Circuit Breaker ngắt mạch khi lỗi tràn lan ➔ Retry tự cứu lỗi chập chờn. Đặc biệt kiểm soát thứ tự lồng nhau: khi Circuit Breaker đã OPEN, Retry lập tức dừng lại, ngăn chặn triệt để thảm họa bão request (Retry Storm).',
+    steps: [
+      'Pha 1: 6 lượt song song (Bulkhead cấp 3 suất, từ chối 3 lượt)',
+      'Pha 2: Lỗi 2 lần đầu (Retry tự thử lại và thành công ở lần 3)',
+      'Pha 3: User Service trễ 3s (Feign timeout ngắt ở 1s, CB đếm lỗi và chuyển sang OPEN)',
+      'Pha 4: Gửi 1 lượt (CB chặn đứng trong 0ms, Retry ngừng gọi lại để chống Retry Storm)',
+    ],
+    takeaway: 'Thấy rõ thứ tự lồng nhau: Retry (ngoài) ➔ Circuit Breaker ➔ Bulkhead ➔ Feign timeout. Đặc biệt, khi Circuit Breaker đã OPEN, Retry lập tức ngừng gọi lại, ngăn chặn nguy cơ Retry Storm.',
+    terms: [
+      ['Decorators Pipeline', 'Thứ tự lồng nhau chuẩn: Retry (ngoài cùng) ➔ Circuit Breaker ➔ Bulkhead ➔ Feign Timeout (trong cùng).'],
+      ['Chống Retry Storm', 'Khi Circuit Breaker chuyển sang trạng thái OPEN, Retry nhận diện ngoại lệ CallNotPermittedException và không thực hiện thử lại vô ích.'],
+      ['Fail-fast', 'Phản hồi thất bại tức thì (0ms) ngay tại Order Service mà không phát sinh thêm bất kỳ lượt gọi nào sang User Service.'],
+    ],
+  },
+  fallback: {
+    goal: 'So sánh người dùng thấy gì khi cùng một sự cố được xử lý có hoặc không có dữ liệu dự phòng.',
+    mainPurpose: 'Cung cấp giải pháp hạ cấp mềm dẻo (Graceful Degradation). Khi mọi cơ chế bảo vệ đều báo lỗi hoặc downstream sập nguồn, Fallback tự động trả về phản hồi dự phòng an toàn (HTTP 200 kèm nhãn FALLBACK) để giao diện người dùng vẫn có dữ liệu hiển thị mượt mà thay vì màn hình lỗi trắng xóa.',
+    steps: ['Giả lập User Service lỗi', 'Gọi khi tắt dữ liệu dự phòng (nhận lỗi 500/503)', 'Gọi lại khi bật dữ liệu dự phòng (nhận dữ liệu khách dự phòng HTTP 200)'],
+    takeaway: 'Đọc trường outcome bên cạnh mã HTTP. FALLBACK cho biết màn hình đang dùng thông tin dự phòng; dữ liệu khách thật vẫn chưa lấy được.',
+    terms: [
+      ['Fallback', 'Dữ liệu thay thế mà Order Service trả khi luồng lấy thông tin khách thất bại. Demo dùng khách dự phòng để giao diện vẫn có nội dung hiển thị.'],
+      ['HTTP 200 và FALLBACK', 'API đã trả một phản hồi có thể hiển thị. Trường outcome cho biết phản hồi này đến từ nhánh dự phòng.'],
+    ],
+  },
+};
