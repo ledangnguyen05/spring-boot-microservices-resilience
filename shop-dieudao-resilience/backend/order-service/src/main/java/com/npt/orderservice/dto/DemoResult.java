@@ -1,5 +1,9 @@
 package com.npt.orderservice.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+
+import java.util.List;
+
 /**
  * Kết quả trả về cho mỗi lần demo Resilience.
  *
@@ -11,6 +15,7 @@ package com.npt.orderservice.dto;
  * @param attempts   số lần THỰC SỰ gọi sang user-service (để thấy retry)
  * @param elapsedMs  tổng thời gian xử lý
  * @param fallback   true nếu dữ liệu là dự phòng
+ * @param attemptResults kết quả từng lời gọi User Service trong demo Retry
  */
 public record DemoResult(String pattern,
                          String outcome,
@@ -19,6 +24,14 @@ public record DemoResult(String pattern,
                          UserResponseDTO user,
                          int attempts,
                          long elapsedMs,
-                         boolean fallback) {
+                         boolean fallback,
+                         @JsonInclude(JsonInclude.Include.NON_EMPTY) List<RetryAttempt> attemptResults) {
+
+    public DemoResult(String pattern, String outcome, int httpStatus, String message,
+                      UserResponseDTO user, int attempts, long elapsedMs, boolean fallback) {
+        this(pattern, outcome, httpStatus, message, user, attempts, elapsedMs, fallback, List.of());
+    }
+
+    public record RetryAttempt(int number, Integer httpStatus, String outcome, long elapsedMs) {}
 }
 

@@ -23,7 +23,7 @@ public class UserDataSeeder implements CommandLineRunner {
     public void run(String... args) {
         if (userRepository.count() == 0) {
             List<User> sampleUsers = List.of(
-                    new User("Nguyễn Phúc Thành", "thanh.nguyen@example.com", "0901234567", "1 Lê Lợi, Quận 1, TP. HCM"),
+                    new User("Nguyễn Văn A", "thanh.nguyen@example.com", "0901234567", "1 Lê Lợi, Quận 1, TP. HCM"),
                     new User("Trần Thị Mai", "mai.tran@example.com", "0912345678", "12 Trần Hưng Đạo, Hoàn Kiếm, Hà Nội"),
                     new User("Lê Hoàng Nam", "nam.le@example.com", "0923456789", "45 Nguyễn Huệ, Quận 1, TP. HCM"),
                     new User("Phạm Minh Tuấn", "tuan.pham@example.com", "0934567890", "78 Cầu Giấy, Cầu Giấy, Hà Nội"),

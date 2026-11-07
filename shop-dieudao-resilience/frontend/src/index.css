@@ -129,6 +129,15 @@ svg { flex-shrink: 0; }
 .result-table tbody tr:nth-child(even) { background: #fafaff; }
 .result-table small { display: block; margin-top: 3px; color: var(--muted); }
 .numeric { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.call-details { margin-top: 12px; }
+.demo-clock {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px;
+  padding: 12px; margin-bottom: 12px; border-radius: 10px; background: var(--tint); color: var(--accent);
+}
+.clock-label { font-size: .82rem; }
+.clock-label small { display: block; margin-top: 3px; color: var(--muted); }
+.clock-time { font-size: 1.35rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.demo-clock progress { grid-column: 1 / -1; width: 100%; height: 8px; accent-color: var(--accent); }
 .http-code { display: inline-block; border-radius: 6px; padding: 2px 7px; font-weight: 800; }
 .http-ok { color: #16664e; background: #eaf8f1; }
 .http-error { color: #943d44; background: #fbeef0; }
@@ -142,6 +151,8 @@ svg { flex-shrink: 0; }
   border: 1px solid #ddd8f5; border-radius: 10px; background: #f3f0ff; color: #433985;
 }
 .conclusion h4 { margin: 0 0 3px; font-size: .86rem; }
+.conclusion ol { margin: 6px 0 9px; padding-left: 19px; font-size: .83rem; line-height: 1.55; }
+.conclusion li + li { margin-top: 3px; }
 .conclusion p { font-size: .83rem; line-height: 1.55; }
 footer { text-align: right; color: var(--muted); font-size: .73rem; margin-top: 16px; }
 footer span { margin: 0 4px; color: var(--accent); }

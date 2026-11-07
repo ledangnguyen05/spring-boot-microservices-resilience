@@ -13,6 +13,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -78,12 +80,31 @@ public class ResilienceDemoService {
     // =====================================================================
     public DemoResult retry(Long userId) {
         AtomicInteger attempts = new AtomicInteger();
-        return run("2-RETRY", attempts, false, userId, () -> {
-            Supplier<UserResponseDTO> call = () -> callUser("retry", userId, attempts);
+        List<DemoResult.RetryAttempt> attemptResults = new ArrayList<>();
+        DemoResult result = run("2-RETRY", attempts, false, userId, () -> {
+            Supplier<UserResponseDTO> call = () -> {
+                long start = System.nanoTime();
+                try {
+                    UserResponseDTO user = callUser("retry", userId, attempts);
+                    long elapsed = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+                    attemptResults.add(new DemoResult.RetryAttempt(attempts.get(), 200, "OK", elapsed));
+                    return user;
+                } catch (RuntimeException failure) {
+                    Throwable cause = unwrap(failure);
+                    Integer status = cause instanceof FeignException feign && feign.status() > 0
+                            ? feign.status() : null;
+                    long elapsed = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+                    String outcome = toFailure("2-RETRY", cause, attempts.get(), elapsed).outcome();
+                    attemptResults.add(new DemoResult.RetryAttempt(attempts.get(), status, outcome, elapsed));
+                    throw failure;
+                }
+            };
             return Decorators.ofSupplier(call)
                     .withRetry(kit.retryOnly())
                     .get();
         });
+        return new DemoResult(result.pattern(), result.outcome(), result.httpStatus(), result.message(),
+                result.user(), result.attempts(), result.elapsedMs(), result.fallback(), List.copyOf(attemptResults));
     }
 
     // =====================================================================
