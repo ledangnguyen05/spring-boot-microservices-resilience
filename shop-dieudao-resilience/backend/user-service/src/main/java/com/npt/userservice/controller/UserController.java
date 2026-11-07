@@ -1,6 +1,8 @@
 package com.npt.userservice.controller;
 
 import com.npt.userservice.dto.UserResponseDTO;
+import com.npt.userservice.entity.User;
+import com.npt.userservice.repository.UserRepository;
 import com.npt.userservice.service.ChaosState;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -12,6 +14,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.List;
+
 @RestController
 @CrossOrigin(origins = "*")
 @Tag(name = "Users API", description = "Tra cứu thông tin người dùng")
@@ -19,13 +23,22 @@ import org.springframework.web.server.ResponseStatusException;
 public class UserController {
 
     private final ChaosState chaos;
+    private final UserRepository userRepository;
 
-    public UserController(ChaosState chaos) {
+    public UserController(ChaosState chaos, UserRepository userRepository) {
         this.chaos = chaos;
+        this.userRepository = userRepository;
+    }
+
+    @Operation(summary = "Lấy danh sách tất cả Users",
+            description = "Trả về danh sách 10 Users được seed trong cơ sở dữ liệu.")
+    @GetMapping
+    public List<User> getAllUsers() {
+        return userRepository.findAll();
     }
 
     @Operation(summary = "Lấy thông tin User theo ID",
-            description = "Trả về thông tin User. Nếu ChaosState được kích hoạt, service sẽ giả lập độ trễ (delayMs) hoặc trả lỗi 500 (failPercent, failFirstN).")
+            description = "Trả về thông tin User từ cơ sở dữ liệu. Nếu ChaosState được kích hoạt, service sẽ giả lập độ trễ (delayMs) hoặc trả lỗi 500 (failPercent, failFirstN).")
     @GetMapping("/{userId}")
     public UserResponseDTO getUserById(@PathVariable Long userId) throws InterruptedException {
         int call = chaos.nextCall();
@@ -44,6 +57,9 @@ public class UserController {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "chaos: injected failure");
         }
 
-        return new UserResponseDTO(userId, "Thành", "1 Lê Lợi, HCM City");
+        User user = userRepository.findById(userId)
+                .orElseGet(() -> new User(userId, "Khách #" + userId, "user" + userId + "@example.com", "0900000000", "Địa chỉ mặc định, HCM City"));
+
+        return new UserResponseDTO(user.getId(), user.getName(), user.getAddress());
     }
 }
