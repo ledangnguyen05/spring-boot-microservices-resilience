@@ -11,18 +11,14 @@ import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestMethod;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 @RestController
 @CrossOrigin(origins = "*")
-@Tag(name = "User & Chaos API", description = "Các endpoint lấy User và điều khiển sự cố Chaos (delay, 500, failFirstN)")
+@Tag(name = "Users API", description = "Tra cứu thông tin người dùng")
 @RequestMapping("/api/users")
 public class UserController {
 
@@ -65,36 +61,5 @@ public class UserController {
                 .orElseGet(() -> new User(userId, "Khách #" + userId, "user" + userId + "@example.com", "0900000000", "Địa chỉ mặc định, HCM City"));
 
         return new UserResponseDTO(user.getId(), user.getName(), user.getAddress());
-    }
-
-    @Operation(summary = "Cấu hình giả lập sự cố (Chaos Injection)",
-            description = "Điều khiển sự cố lúc runtime (GET/POST): delayMs (độ trễ ms), failPercent (% lỗi 500), failFirstN (lỗi N lần đầu rồi tự phục hồi).")
-    @RequestMapping(path = "/chaos", method = {RequestMethod.GET, RequestMethod.POST})
-    public Map<String, Object> chaos(@RequestParam(required = false) Long delayMs,
-                                     @RequestParam(required = false) Integer failPercent,
-                                     @RequestParam(required = false) Integer failFirstN) {
-        chaos.configure(delayMs, failPercent, failFirstN);
-        return state();
-    }
-
-    @Operation(summary = "Khôi phục trạng thái bình thường (Reset Chaos)",
-            description = "Đưa user-service về trạng thái bình thường (delay=0, fail=0) và reset bộ đếm tổng số cuộc gọi.")
-    @RequestMapping(path = "/chaos/reset", method = {RequestMethod.GET, RequestMethod.POST})
-    public Map<String, Object> reset() {
-        chaos.reset();
-        return state();
-    }
-
-    @Operation(summary = "Xem trạng thái cấu hình Chaos hiện tại",
-            description = "Xem thông số delayMs, failPercent, failFirstN và tổng số request đã nhận.")
-    @GetMapping("/chaos/state")
-    public Map<String, Object> state() {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("delayMs", chaos.getDelayMs());
-        m.put("failPercent", chaos.getFailPercent());
-        m.put("failFirstN_remaining", chaos.getFailFirstN());
-        m.put("failFirstNLeft", chaos.getFailFirstN());
-        m.put("totalCalls", chaos.getTotalCalls());
-        return m;
     }
 }

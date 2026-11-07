@@ -73,8 +73,8 @@ public class ResilienceDemoService {
     // DEMO 2: RETRY
     // Vấn đề : lỗi thoáng qua (mạng chớp, instance đang khởi động) -> gọi lại là khỏi.
     // Giải pháp: Retry tối đa 3 lần, chờ 500ms -> 1000ms (exponential backoff).
-    // Thử    : user-service/chaos?failFirstN=2  => lần 3 thành công.
-    //          user-service/chaos?failFirstN=5  => hết 3 lần vẫn lỗi.
+    // Thử    : POST /api/chaos?failFirstN=2  => lần 3 thành công.
+    //          POST /api/chaos?failFirstN=5  => hết 3 lần vẫn lỗi.
     // =====================================================================
     public DemoResult retry(Long userId) {
         AtomicInteger attempts = new AtomicInteger();
@@ -90,7 +90,7 @@ public class ResilienceDemoService {
     // DEMO 3: BULKHEAD
     // Vấn đề : 1 endpoint chậm chiếm hết thread -> các endpoint khác chết theo (như vách ngăn tàu).
     // Giải pháp: tối đa N request đồng thời vào user-service, dư thì từ chối NGAY (429).
-    // Thử    : chaos?delayMs=2000 rồi /demo/burst/bulkhead?n=10
+    // Thử    : /api/chaos?delayMs=2000 rồi /api/orders/resilience/burst/bulkhead?n=10
     // =====================================================================
     public DemoResult bulkhead(Long userId) {
         AtomicInteger attempts = new AtomicInteger();
@@ -107,7 +107,7 @@ public class ResilienceDemoService {
     // Vấn đề : user-service sập mà vẫn dồn request vào -> chờ vô ích, càng làm nó khó hồi phục.
     // Giải pháp: CLOSED -> (>=50% lỗi trong 5 lần gần nhất) -> OPEN: fail-fast 503
     //            -> sau 10s HALF_OPEN: thử 2 request -> khỏe thì CLOSED, lỗi thì OPEN lại.
-    // Thử    : chaos?failPercent=100 rồi gọi /demo/circuit-breaker/1 liên tục.
+    // Thử    : /api/chaos?failPercent=100 rồi gọi /api/orders/resilience/circuit-breaker/1 liên tục.
     // =====================================================================
     public DemoResult circuitBreaker(Long userId) {
         AtomicInteger attempts = new AtomicInteger();

@@ -25,7 +25,7 @@ shop-dieudao-resilience/
 │   │   └── src/main/resources/application.properties
 │   ├── order-service/                    # Dịch vụ Order & Resilience4j :8082
 │   │   ├── src/main/java/com/npt/orderservice/
-│   │   │   ├── controller/               # OrderController, ResilienceDemoController
+│   │   │   ├── controller/               # OrderController, ResilienceController
 │   │   │   ├── dto/                      # UserResponseDTO, DemoResult
 │   │   │   ├── client/                   # UserClient, UserResilientClient (Feign)
 │   │   │   ├── service/                  # ResilienceKit, ResilienceDemoService
@@ -34,7 +34,7 @@ shop-dieudao-resilience/
 │   │   └── src/test/java/...             # Unit test CircuitBreaker, Bulkhead, Retry
 │   └── user-service/                     # Dịch vụ User & Chaos Simulator :8081
 │       ├── src/main/java/com/npt/userservice/
-│       │   ├── controller/               # UserController
+│       │   ├── controller/               # UserController, ChaosController
 │       │   ├── dto/                      # UserResponseDTO
 │       │   ├── service/                  # ChaosState (giả lập sự cố)
 │       │   ├── config/                   # OpenApiConfig
@@ -110,6 +110,16 @@ Truy cập trình duyệt: **[http://localhost:3000](http://localhost:3000)** đ
 
 - **Order Service Swagger:** [http://localhost:8082/swagger-ui/index.html](http://localhost:8082/swagger-ui/index.html)
 - **User Service Swagger:** [http://localhost:8081/swagger-ui/index.html](http://localhost:8081/swagger-ui/index.html)
+
+| Dịch vụ | API |
+| --- | --- |
+| API Gateway | `GET /actuator/health` |
+| User Service | `GET /api/users/{userId}` |
+| User Service · Chaos | `GET /api/chaos` xem trạng thái, `POST /api/chaos` cấu hình lỗi, `POST /api/chaos/reset` khôi phục |
+| Order Service | `GET /api/orders/{orderId}` |
+| Order Service · Resilience | `GET /api/orders/resilience/status` xem trạng thái, `POST /api/orders/resilience/reset` đặt lại Circuit Breaker |
+
+Xem các lệnh chạy Timeout, Retry, Bulkhead và Circuit Breaker trong [hướng dẫn demo](DEMO_RESILIENCE.md).
 
 ---
 

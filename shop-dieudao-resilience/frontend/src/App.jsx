@@ -43,7 +43,7 @@ export default function App() {
   const checkHealth = async () => {
     // 1. User Service (:8081)
     try {
-      const res = await fetch(`${USER_SERVICE_URL}/api/users/chaos`);
+      const res = await fetch(`${USER_SERVICE_URL}/api/chaos`);
       if (res.ok) {
         const data = await res.json();
         setUserOnline(true);
@@ -57,7 +57,7 @@ export default function App() {
 
     // 2. Order Service (:8082)
     try {
-      const res = await fetch(`${ORDER_SERVICE_URL}/api/orders/demo/status`);
+      const res = await fetch(`${ORDER_SERVICE_URL}/api/orders/resilience/status`);
       if (res.ok) {
         const data = await res.json();
         setOrderOnline(true);
@@ -71,7 +71,7 @@ export default function App() {
 
     // 3. API Gateway (:8080)
     try {
-      const res = await fetch(`${GATEWAY_URL}/health`);
+      const res = await fetch(`${GATEWAY_URL}/actuator/health`);
       if (res.ok) {
         setGatewayOnline(true);
       } else {
@@ -91,7 +91,7 @@ export default function App() {
   // Configure chaos
   const applyChaos = async (d, p, n) => {
     try {
-      const res = await fetch(`${USER_SERVICE_URL}/api/users/chaos?delayMs=${d}&failPercent=${p}&failFirstN=${n}`, {
+      const res = await fetch(`${USER_SERVICE_URL}/api/chaos?delayMs=${d}&failPercent=${p}&failFirstN=${n}`, {
         method: 'POST',
       });
       const data = await res.json();
@@ -107,7 +107,7 @@ export default function App() {
 
   const resetChaos = async () => {
     try {
-      const res = await fetch(`${USER_SERVICE_URL}/api/users/chaos/reset`, { method: 'POST' });
+      const res = await fetch(`${USER_SERVICE_URL}/api/chaos/reset`, { method: 'POST' });
       const data = await res.json();
       setChaos(data);
       setDelayInput(0);
@@ -122,7 +122,7 @@ export default function App() {
   // Reset Circuit Breaker
   const resetCircuitBreaker = async () => {
     try {
-      const res = await fetch(`${GATEWAY_URL}/api/orders/demo/reset`, { method: 'POST' });
+      const res = await fetch(`${GATEWAY_URL}/api/orders/resilience/reset`, { method: 'POST' });
       const data = await res.json();
       setCbMetrics(data);
       addLog('CB_RESET', 200, 'Đã Reset toàn bộ CircuitBreaker về trạng thái CLOSED', 0);
@@ -156,7 +156,7 @@ export default function App() {
   const burstCb = async () => {
     setLoading((prev) => ({ ...prev, cbBurst: true }));
     for (let i = 1; i <= 6; i++) {
-      await runDemo('cb', `${GATEWAY_URL}/api/orders/demo/circuit-breaker/1`);
+      await runDemo('cb', `${GATEWAY_URL}/api/orders/resilience/circuit-breaker/1`);
       await new Promise((r) => setTimeout(r, 120));
     }
     setLoading((prev) => ({ ...prev, cbBurst: false }));
@@ -327,13 +327,13 @@ export default function App() {
             <div className="card-badge badge-timeout">Pattern 1</div>
             <h3>TimeLimiter (Timeout)</h3>
             <p>Cắt đứt lời gọi sau 1.5s nếu User Service chậm phản hồi. Bảo vệ thread không bị treo vô hạn.</p>
-            <div className="endpoint-tag">GET /api/orders/demo/timeout/1</div>
+            <div className="endpoint-tag">GET /api/orders/resilience/timeout/1</div>
           </div>
           <div>
             <button
               className="action-btn"
               disabled={loading.timeout}
-              onClick={() => runDemo('timeout', `${GATEWAY_URL}/api/orders/demo/timeout/1`)}
+              onClick={() => runDemo('timeout', `${GATEWAY_URL}/api/orders/resilience/timeout/1`)}
             >
               {loading.timeout ? 'Đang thực thi...' : 'Test Timeout (TimeLimiter 1.5s)'}
             </button>
@@ -361,13 +361,13 @@ export default function App() {
             <div className="card-badge badge-retry">Pattern 2</div>
             <h3>Resilience4j Retry</h3>
             <p>Tự động thử lại tối đa 3 lần với Exponential Backoff (500ms, 1000ms...) khi gặp sự cố mạng thoáng qua.</p>
-            <div className="endpoint-tag">GET /api/orders/demo/retry/1</div>
+            <div className="endpoint-tag">GET /api/orders/resilience/retry/1</div>
           </div>
           <div>
             <button
               className="action-btn"
               disabled={loading.retry}
-              onClick={() => runDemo('retry', `${GATEWAY_URL}/api/orders/demo/retry/1`)}
+              onClick={() => runDemo('retry', `${GATEWAY_URL}/api/orders/resilience/retry/1`)}
             >
               {loading.retry ? 'Đang thử lại...' : 'Test Retry (Tối đa 3 lần)'}
             </button>
@@ -399,7 +399,7 @@ export default function App() {
             <div className="card-badge badge-bulkhead">Pattern 3</div>
             <h3>Bulkhead (Vách ngăn cách ly)</h3>
             <p>Giới hạn tối đa 3 request đồng thời. Request vượt ngưỡng bị từ chối ngay lập tức với HTTP 429.</p>
-            <div className="endpoint-tag">GET /api/orders/demo/burst/bulkhead?n={burstCount}</div>
+            <div className="endpoint-tag">GET /api/orders/resilience/burst/bulkhead?n={burstCount}</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '8px' }}>
               <span style={{ fontSize: '12px', color: '#94a3b8' }}>Số request song song:</span>
               <input
@@ -416,7 +416,7 @@ export default function App() {
             <button
               className="action-btn"
               disabled={loading.bulkhead}
-              onClick={() => runDemo('bulkhead', `${GATEWAY_URL}/api/orders/demo/burst/bulkhead?n=${burstCount}`)}
+              onClick={() => runDemo('bulkhead', `${GATEWAY_URL}/api/orders/resilience/burst/bulkhead?n=${burstCount}`)}
             >
               {loading.bulkhead ? 'Đang bắn burst...' : `Bắn ${burstCount} Request song song`}
             </button>
@@ -459,7 +459,7 @@ export default function App() {
               <button
                 className="action-btn"
                 disabled={loading.cb}
-                onClick={() => runDemo('cb', `${GATEWAY_URL}/api/orders/demo/circuit-breaker/1`)}
+                onClick={() => runDemo('cb', `${GATEWAY_URL}/api/orders/resilience/circuit-breaker/1`)}
               >
                 Gửi 1 Request
               </button>
@@ -513,7 +513,7 @@ export default function App() {
             <button
               className="action-btn"
               disabled={loading.combined}
-              onClick={() => runDemo('combined', `${GATEWAY_URL}/api/orders/demo/combined/1?fallback=${fallbackEnabled}`)}
+              onClick={() => runDemo('combined', `${GATEWAY_URL}/api/orders/resilience/combined/1?fallback=${fallbackEnabled}`)}
               style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}
             >
               {loading.combined ? 'Đang thực thi pipeline...' : 'Chạy thử nghiệm Kết hợp Toàn diện'}
