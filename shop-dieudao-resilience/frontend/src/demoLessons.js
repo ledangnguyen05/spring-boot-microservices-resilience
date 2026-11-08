@@ -89,3 +89,127 @@ export const lessons = {
     ],
   },
 };
+
+export const comparisons = {
+  timeout: {
+    title: 'So sánh cơ chế Feign / TimeLimiter Timeout vs Không có Timeout',
+    warning: 'Khi không dùng Timeout, downstream bị treo 4 giây làm luồng xử lý của Order Service bị ngâm nghẹt suốt 4.000ms, khiến toàn bộ Connection Pool và Thread Pool bị cạn kiệt, dẫn tới sập dây chuyền (Cascading Failure).',
+    rows: [
+      {
+        criterion: 'Thời gian chờ phản hồi',
+        protectedVal: 'Ngắt ngay sau 1.5s (TimeLimiter) hoặc 3s (Feign readTimeout)',
+        unprotectedVal: 'Treo cứng 4.000ms (hoặc chờ vô hạn tới khi gateway/client timeout)',
+        impact: 'Cứu được 2.5s lãng phí, giải phóng luồng ngay lập tức.',
+      },
+      {
+        criterion: 'Tài nguyên Thread & Socket',
+        protectedVal: 'Thu hồi Thread pool và Socket TCP ngay khi hết hạn định ngạch',
+        unprotectedVal: 'Thread bị phong tỏa (Blocked I/O) suốt 4s, Connection Pool cạn sạch',
+        impact: 'Ngăn chặn hiện tượng nghẽn luồng dây chuyền sang các nghiệp vụ khác.',
+      },
+      {
+        criterion: 'Mã HTTP & Trạng thái',
+        protectedVal: 'HTTP 504 Gateway Timeout có kiểm soát rõ ràng',
+        unprotectedVal: 'HTTP 200 sau 4s (hoặc trình duyệt timeout báo lỗi kết nối ngắt ngang)',
+        impact: 'Phản hồi dứt khoát giúp client xử lý UI thay vì quay vòng vô tận.',
+      },
+      {
+        criterion: 'Nguy cơ sụp đổ dây chuyền',
+        protectedVal: 'Triệt tiêu 100%: Dịch vụ gọi (Order) sống sót ngay cả khi đối tác chết ngạt',
+        unprotectedVal: 'Nguy cơ cực cao: 20-50 request ngâm đồng thời là sập toàn bộ Order Service',
+        impact: 'Timeout là lớp phòng thủ tối thiểu bắt buộc của mọi kiến trúc Microservices.',
+      },
+    ],
+  },
+  retry: {
+    title: 'So sánh cơ chế Resilience4j Retry vs Không có Retry',
+    warning: 'Khi không dùng Retry, bất kỳ lỗi mạng thoáng qua (HTTP 500 transient fault) ở downstream cũng sẽ lập tức biến thành lỗi thất bại vĩnh viễn với người dùng, ném lỗi 500 và làm hỏng giao dịch ngay lần đầu tiên.',
+    rows: [
+      {
+        criterion: 'Xử lý lỗi mạng chập chờn',
+        protectedVal: 'Tự động thử lại tối đa 3 lần với Exponential Backoff (500ms, 1000ms)',
+        unprotectedVal: 'Đầu hàng ngay lập tức ở lần đầu tiên (1 attempt duy nhất)',
+        impact: 'Cứu vãn giao dịch thành công 100% trong suốt với người dùng cuối.',
+      },
+      {
+        criterion: 'Trải nghiệm người dùng (UX)',
+        protectedVal: 'Nhận kết quả HTTP 200 OK với đầy đủ dữ liệu khách hàng',
+        unprotectedVal: 'Bị quăng lỗi HTTP 500 sụp đổ màn hình, đơn hàng bị hủy bỏ',
+        impact: 'Người dùng không phải tự tay bấm F5 / Đặt lại đơn hàng nhiều lần.',
+      },
+      {
+        criterion: 'Thời gian phục hồi đối tác',
+        protectedVal: 'Áp dụng Exponential Backoff để downstream có thời gian khởi động lại',
+        unprotectedVal: 'Không có cơ chế phục hồi; chỉ biết báo lỗi và bỏ cuộc',
+        impact: 'Khoảng nghỉ tăng dần ngăn chặn hiện tượng bão thử lại (Retry Storm).',
+      },
+      {
+        criterion: 'Số lần gọi downstream',
+        protectedVal: 'Thử lại có kiểm soát (Lần 1 ❌ ➔ Lần 2 ❌ ➔ Lần 3 ✅)',
+        unprotectedVal: 'Chỉ gọi đúng 1 lần duy nhất rồi vứt bỏ toàn bộ ngữ cảnh',
+        impact: 'Tăng tỷ lệ khả dụng (High Availability) từ 0% lên 100% khi lỗi thoáng qua.',
+      },
+    ],
+  },
+  bulkhead: {
+    title: 'So sánh cơ chế Resilience4j Bulkhead vs Không có Bulkhead',
+    warning: 'Khi không dùng Bulkhead, 10 request đồng thời ập vào chiếm trọn 10/10 worker threads của Order Service trong 2 giây. Thread pool bị cạn kiệt 100%, làm tê liệt toàn bộ các API quan trọng khác như tạo đơn, thanh toán hay hủy đơn.',
+    rows: [
+      {
+        criterion: 'Giới hạn đồng thời (Concurrency Cap)',
+        protectedVal: 'Giới hạn nghiêm ngặt 3 suất (Semaphore maxConcurrentCalls = 3)',
+        unprotectedVal: 'Không có bất kỳ giới hạn nào, nhận bừa bãi toàn bộ 10/10 request',
+        impact: 'Cô lập rủi ro trong một khoang kín, bảo toàn 70% tài nguyên còn lại.',
+      },
+      {
+        criterion: 'Phản ứng khi quá tải',
+        protectedVal: '7 lượt quá tải bị dội ngược ngay tức khắc trong 1ms (HTTP 429)',
+        unprotectedVal: 'Cả 10 lượt cùng chen chúc ngâm 2s, chiếm dụng 100% worker threads',
+        impact: 'Fail-fast trong 1ms giúp client biết hệ thống bận thay vì treo ngâm máy móc.',
+      },
+      {
+        criterion: 'Tình trạng Thread Pool',
+        protectedVal: 'Chỉ dùng tối đa 3 threads, còn dư thừa thread cho các API khác',
+        unprotectedVal: 'Cạn kiệt 10/10 threads trong 2s, gây nạn đói tài nguyên (Thread Starvation)',
+        impact: 'Bảo vệ các luồng doanh thu cốt lõi (thanh toán, giỏ hàng) luôn thông suốt.',
+      },
+      {
+        criterion: 'Mã HTTP phản hồi',
+        protectedVal: '3 lượt HTTP 200 OK + 7 lượt HTTP 429 Too Many Requests chuẩn mực',
+        unprotectedVal: '10 lượt HTTP 200 nhưng toàn hệ thống bị nghẽn đơ cứng suốt 2 giây',
+        impact: 'Áp dụng nguyên lý khoang kín vách ngăn tàu thủy (Ship Bulkhead).',
+      },
+    ],
+  },
+  breaker: {
+    title: 'So sánh cơ chế Circuit Breaker vs Không có Circuit Breaker',
+    warning: 'Khi không dùng Circuit Breaker, dù downstream đã chết 100%, Order Service vẫn mù quáng gửi cả 6 request qua mạng. Không có Fail-Fast (0ms), vừa lãng phí tài nguyên vừa dội bom vào đối tác đang gặp sự cố, chặn đứng cơ hội tự phục hồi.',
+    rows: [
+      {
+        criterion: 'Hành vi khi đối tác chết',
+        protectedVal: 'Nhận diện lỗi ≥ 50% ➔ Tự bung OPEN 🔴, chặn đứng mọi lời gọi mới',
+        unprotectedVal: 'Mù quáng gửi tiếp cả 6 request qua mạng dù đối tác đang chết ngập ngụa',
+        impact: 'Ngắt mạch khẩn cấp để ngăn chặn thảm họa sập toàn diện hệ thống.',
+      },
+      {
+        criterion: 'Tốc độ phản hồi khi lỗi',
+        protectedVal: 'Lượt 6 bị từ chối NGAY TỨC THÌ trong 14ms (HTTP 503 Fail-Fast, 0 lần gọi)',
+        unprotectedVal: 'Mỗi lượt đều phải đi qua mạng, đợi lỗi và tiêu tốn hàng trăm ms/giây vô ích',
+        impact: 'Tiết kiệm 100% thời gian chờ và băng thông mạng khi dịch vụ lỗi.',
+      },
+      {
+        criterion: 'Bảo vệ downstream',
+        protectedVal: 'Mạch mở 10s cho đối tác thở, ngừng hẳn mọi cuộc gọi sang đối tác',
+        unprotectedVal: 'Liên tục nã đạn request vào đối tác đang kiệt sức (Cascading Overload)',
+        impact: 'Giúp đối tác có không gian thở và tự chữa lành (Self-Healing).',
+      },
+      {
+        criterion: 'Cơ chế tự phục hồi',
+        protectedVal: 'Tự chuyển HALF-OPEN 🟡, gửi 2 lượt thăm dò và tự đóng lại CLOSED 🟢',
+        unprotectedVal: 'Không có trí thông minh tự phục hồi; phụ thuộc hoàn toàn vào reboot thủ công',
+        impact: 'Hệ thống tự động vận hành và hồi phục mà không cần can thiệp con người.',
+      },
+    ],
+  },
+};
+

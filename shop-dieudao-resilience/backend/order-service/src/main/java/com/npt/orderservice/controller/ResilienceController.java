@@ -37,6 +37,13 @@ public class ResilienceController {
         this.service = service;
     }
 
+    @Operation(summary = "Demo 0: Không bảo vệ (Baseline để đối chứng)",
+            description = "Gọi thẳng sang User Service không qua bất kỳ cơ chế Resilience nào: Không Timeout, Không Retry, Không Circuit Breaker, Không Bulkhead.")
+    @GetMapping("/no-protection/{userId}")
+    public ResponseEntity<DemoResult> noProtection(@PathVariable Long userId) {
+        return reply(service.noProtection(userId));
+    }
+
     @Operation(summary = "Demo 1a: Feign Timeout (Read Timeout 3s - Topic chính)",
             description = "Gọi thẳng OpenFeign client không qua Decorator nào; khi User Service trễ 4s, Feign cắt sau 3s (readTimeout) trả mã 504 FEIGN_TIMEOUT.")
     @GetMapping("/feign-timeout/{userId}")

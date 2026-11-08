@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Activity, Clock3, FileJson, ListChecks, Table2 } from 'lucide-react';
-import { lessons } from './demoLessons.js';
+import { Activity, AlertTriangle, Clock3, FileJson, ListChecks, ShieldCheck, Table2, Zap } from 'lucide-react';
+import { lessons, comparisons } from './demoLessons.js';
 
 const number = new Intl.NumberFormat('vi-VN');
 const milliseconds = (value) => value == null ? '—' : `${number.format(value)} ms`;
@@ -359,7 +359,277 @@ function describeProcess(scenario, result, breaker) {
   }
 }
 
-export default function DemoResults({ scenario, result, breaker, busy, error, view, onViewChange }) {
+function CompareMatrix({ scenario }) {
+  const comp = comparisons[scenario];
+  if (!comp) {
+    return (
+      <div className="table-frame" tabIndex={0} role="region" aria-label="So sánh">
+        <p className="note">Chủ đề này không thuộc 4 chủ đề Resilience cốt lõi cần đối chiếu so sánh.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="compare-matrix-container">
+      <div className="compare-matrix-header">
+        <div className="compare-title">
+          <Activity size={18} />
+          <h4>{comp.title}</h4>
+        </div>
+        <div className="compare-warning-callout">
+          <AlertTriangle size={18} />
+          <span>{comp.warning}</span>
+        </div>
+      </div>
+
+      <div className="table-frame" tabIndex={0} role="region" aria-label={comp.title}>
+        <table className="result-table compare-table">
+          <thead>
+            <tr>
+              <th scope="col" style={{ width: '22%' }}>Tiêu chí so sánh</th>
+              <th scope="col" style={{ width: '28%' }} className="col-protected">
+                <span className="badge-pill protected">🛡️ CÓ BẢO VỆ (Resilience Active)</span>
+              </th>
+              <th scope="col" style={{ width: '28%' }} className="col-unprotected">
+                <span className="badge-pill unprotected">⚠️ KHÔNG BẢO VỆ (Sự cố sập)</span>
+              </th>
+              <th scope="col" style={{ width: '22%' }}>Đánh giá & Bản chất kỹ thuật</th>
+            </tr>
+          </thead>
+          <tbody>
+            {comp.rows.map((row, idx) => (
+              <tr key={idx}>
+                <th scope="row">
+                  <strong>{row.criterion}</strong>
+                </th>
+                <td className="cell-protected">
+                  <span className="text-protected">{row.protectedVal}</span>
+                </td>
+                <td className="cell-unprotected">
+                  <span className="text-unprotected">{row.unprotectedVal}</span>
+                </td>
+                <td>
+                  <small className="impact-text">{row.impact}</small>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function UnprotectedTable({ scenario, result }) {
+  if (scenario === 'retry') {
+    const { body, status, measuredMs } = result;
+    return (
+      <>
+        <div className="unprotected-danger-banner">
+          <AlertTriangle size={18} />
+          <div>
+            <strong>THẢM HỌA THIẾU RETRY:</strong>
+            <p>User Service gặp lỗi 500 thoáng qua ở lần 1. Do không có cơ chế thử lại (Spring Retry / Resilience4j Retry), Order Service lập tức đầu hàng và ném lỗi HTTP 500 về phía Client, làm hỏng toàn bộ giao dịch mua hàng!</p>
+          </div>
+        </div>
+        <div className="table-frame" tabIndex={0} role="region" aria-label="Bảng kết quả không có Retry">
+          <table className="result-table">
+            <thead>
+              <tr>
+                <th scope="col">Lượt thử</th>
+                <th scope="col">HTTP</th>
+                <th scope="col">Kết quả</th>
+                <th scope="col">Thời gian</th>
+                <th scope="col">Số lần gọi User</th>
+                <th scope="col">Khách hàng</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">
+                  Tra cứu khách hàng (Không Retry)
+                  <small style={{ display: 'block', color: '#ef4444', fontWeight: 600, marginTop: '2px' }}>
+                    💥 Bị ném lỗi 500 ngay lần 1
+                  </small>
+                </th>
+                <td><span className="http-code http-error">{status}</span></td>
+                <td><strong style={{ color: '#ef4444' }}>User Service trả lỗi 5xx</strong></td>
+                <td className="numeric">{milliseconds(measuredMs ?? body?.elapsedMs)}</td>
+                <td className="numeric" style={{ color: '#ef4444', fontWeight: 'bold' }}>1 (Không thử lại)</td>
+                <td><span style={{ color: '#ef4444' }}>— (Hủy đơn hàng)</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </>
+    );
+  }
+
+  if (scenario === 'timeout') {
+    const r = Array.isArray(result) ? result[0] : result;
+    const { status, measuredMs, body } = r || {};
+    return (
+      <>
+        <div className="unprotected-danger-banner">
+          <AlertTriangle size={18} />
+          <div>
+            <strong>HIỂM HỌA TREO NGHẼN LUỒNG:</strong>
+            <p>User Service bị nghẽn 4.000ms. Do KHÔNG CÓ Feign readTimeout (3s) hay TimeLimiter (1.5s), luồng xử lý bị phong tỏa suốt hơn 4 giây. Connection Pool sẽ nhanh chóng cạn kiệt nếu có nhiều request cùng tới!</p>
+          </div>
+        </div>
+        <div className="table-frame" tabIndex={0} role="region" aria-label="Bảng kết quả không có Timeout">
+          <table className="result-table">
+            <thead>
+              <tr>
+                <th scope="col">Lượt thử</th>
+                <th scope="col">HTTP</th>
+                <th scope="col">Kết quả</th>
+                <th scope="col">Thời gian</th>
+                <th scope="col">Số lần gọi User</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">
+                  Gọi trực tiếp User Service (Không Timeout)
+                  <small style={{ display: 'block', color: '#f59e0b', fontWeight: 600, marginTop: '2px' }}>
+                    ⏳ Giam giữ Worker Thread suốt 4 giây
+                  </small>
+                </th>
+                <td><span className="http-code http-ok">{status ?? 200}</span></td>
+                <td><strong>Đã nhận dữ liệu (Sau 4 giây ngâm)</strong></td>
+                <td className="numeric" style={{ color: '#ef4444', fontWeight: 'bold' }}>{milliseconds(measuredMs ?? body?.elapsedMs ?? 4016)}</td>
+                <td className="numeric">1</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </>
+    );
+  }
+
+  if (scenario === 'bulkhead') {
+    const { body, status } = result;
+    return (
+      <>
+        <div className="unprotected-danger-banner">
+          <AlertTriangle size={18} />
+          <div>
+            <strong>CẠN KIỆT 100% THREAD POOL (NẠN ĐÓI TÀI NGUYÊN):</strong>
+            <p>10 request đồng thời ập vào. Do không có vách ngăn Bulkhead (Semaphore hạn ngạch 3 suất), toàn bộ 10/10 worker threads của Order Service bị chiếm trọn trong 2 giây. Các nghiệp vụ quan trọng khác (thanh toán, tạo đơn) bị tê liệt hoàn toàn!</p>
+          </div>
+        </div>
+        <div className="table-frame" tabIndex={0} role="region" aria-label="Bảng kết quả không có Bulkhead">
+          <table className="result-table">
+            <caption>10 lượt song song · HTTP {status} · {milliseconds(body?.totalMs)} (10/10 luồng bị chiếm dụng)</caption>
+            <thead>
+              <tr>
+                <th scope="col">Kết quả từng lượt</th>
+                <th scope="col">Số lượt chấp thuận</th>
+                <th scope="col">Tác động tài nguyên</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Thành công nhưng ngâm 2 giây</th>
+                <td className="numeric">10 / 10</td>
+                <td><strong style={{ color: '#ef4444' }}>Chiếm trọn 10/10 Threads trong 2.000ms 🚨</strong></td>
+              </tr>
+              <tr>
+                <th scope="row">Lượt bị chặn bảo vệ (429)</th>
+                <td className="numeric">0 / 10</td>
+                <td><span style={{ color: '#ef4444' }}>0 lượt chặn (Không có Bulkhead bảo vệ)</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        {body?.requestResults && <CallDetails rows={body.requestResults} />}
+      </>
+    );
+  }
+
+  if (scenario === 'breaker') {
+    const responses = Array.isArray(result) ? result : [result];
+    return (
+      <>
+        <div className="unprotected-danger-banner">
+          <AlertTriangle size={18} />
+          <div>
+            <strong>THẢM HỌA THIẾU CIRCUIT BREAKER (DỘI BOM ĐỐI TÁC):</strong>
+            <p>Downstream User Service đã chết 100%. Do không có Circuit Breaker, Order Service vẫn mù quáng gửi cả 6 request qua mạng. Không có Fail-Fast (14ms), vừa lãng phí tài nguyên vừa dội tải đè bẹp đối tác đang gặp sự cố!</p>
+          </div>
+        </div>
+        <div className="table-frame" tabIndex={0} role="region" aria-label="Bảng kết quả không có Circuit Breaker">
+          <table className="result-table">
+            <thead>
+              <tr>
+                <th scope="col">Lượt thử</th>
+                <th scope="col">HTTP</th>
+                <th scope="col">Kết quả</th>
+                <th scope="col">Thời gian</th>
+                <th scope="col">Số lần gọi User</th>
+              </tr>
+            </thead>
+            <tbody>
+              {responses.map(({ body, status, measuredMs }, index) => (
+                <tr key={index}>
+                  <th scope="row">
+                    Lượt {index + 1}/6 (Mạch đóng mù quáng)
+                    {index === 5 && (
+                      <small style={{ display: 'block', color: '#ef4444', fontWeight: 600, marginTop: '2px' }}>
+                        💥 Không có Fail-Fast: Vẫn gọi thật sang User Service
+                      </small>
+                    )}
+                  </th>
+                  <td><span className="http-code http-error">{status}</span></td>
+                  <td><strong style={{ color: '#ef4444' }}>User Service trả lỗi 5xx</strong></td>
+                  <td className="numeric">{milliseconds(measuredMs ?? body?.elapsedMs)}</td>
+                  <td className="numeric" style={{ color: '#ef4444', fontWeight: 'bold' }}>{body?.attempts ?? 1} (Gọi thật)</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </>
+    );
+  }
+
+  return <ResultTable scenario={scenario} result={result} />;
+}
+
+export default function DemoResults({ scenario, result, breaker, busy, error, view, onViewChange, scenarioMode = 'protected' }) {
+  if (scenarioMode === 'compare') {
+    return <CompareMatrix scenario={scenario} />;
+  }
+
+  if (scenarioMode === 'unprotected') {
+    if (!result) {
+      return (
+        <div className="empty" role="status">
+          <AlertTriangle size={20} />
+          {busy ? 'Đang chạy kịch bản không bảo vệ…' : 'Bấm nút "Chạy KHÔNG bảo vệ" ở trên để quan sát sự cố thực tế.'}
+        </div>
+      );
+    }
+    const payload = Array.isArray(result) ? result.map(({ body }) => body) : result.body;
+    return (
+      <>
+        <div className="result-toolbar">
+          <div className="view-switch" role="group" aria-label="Định dạng kết quả">
+            <button type="button" aria-pressed={view === 'table'} onClick={() => onViewChange('table')}><Table2 size={15} /> Bảng</button>
+            <button type="button" aria-pressed={view === 'json'} onClick={() => onViewChange('json')}><FileJson size={15} /> JSON</button>
+          </div>
+          <span className="unprotected-badge-indicator">⚠️ CHẾ ĐỘ: KHÔNG CÓ BẢO VỆ</span>
+        </div>
+        {view === 'table' ? (
+          <UnprotectedTable scenario={scenario} result={result} />
+        ) : (
+          <pre className="json-response" tabIndex={0} aria-label="Nội dung JSON từ API">{JSON.stringify(payload, null, 2)}</pre>
+        )}
+      </>
+    );
+  }
+
   if (!result) return <div className="empty" role="status"><Activity size={20} />{busy ? 'Đang chờ phản hồi…' : 'Chạy kịch bản để xem kết quả.'}</div>;
 
   const payload = Array.isArray(result) ? result.map(({ body }) => body) : result.body;

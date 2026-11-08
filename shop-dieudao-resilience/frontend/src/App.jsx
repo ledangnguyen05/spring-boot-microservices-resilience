@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Activity, ArrowRight, BookOpen, ChevronRight, CircleCheck, CircleHelp, Clock3, Layers3,
+  Activity, AlertTriangle, ArrowRight, BookOpen, ChevronRight, CircleCheck, CircleHelp, Clock3, Layers3,
   LoaderCircle, Network, Package, Play, RefreshCw, RotateCcw, ShieldCheck, Target,
   UserRound, Zap,
 } from 'lucide-react';
@@ -80,6 +80,7 @@ export default function App() {
   const [runCount, setRunCount] = useState(0);
   const [probeRunCount, setProbeRunCount] = useState(0);
   const [dashboardLayout, setDashboardLayout] = useState('stacked'); // 'stacked' (full-width) or 'split' (2-column)
+  const [scenarioMode, setScenarioMode] = useState('protected'); // 'protected' | 'unprotected' | 'compare'
   const running = useRef(false);
   const scenario = scenarios[selected];
   const lesson = lessons[scenario.id];
@@ -112,6 +113,7 @@ export default function App() {
 
   function select(index) {
     setSelected(index);
+    setScenarioMode('protected');
     setResult(null);
     setClock(null);
     setError('');
@@ -158,10 +160,59 @@ export default function App() {
     setRunCount((prev) => prev + 1);
     return perform(async () => {
       await requireOk(user + '/api/chaos/reset', 'POST');
-      if (['breaker', 'fallback', 'converge'].includes(scenario.id)) {
+      if (['breaker', 'fallback', 'converge'].includes(scenario.id) && scenarioMode !== 'unprotected') {
         const status = await requireOk(base + resilience + '/reset', 'POST');
         setBreaker(status.circuitBreaker_demo4.state);
         if (status.circuitBreaker_converge) setConvergeBreaker(status.circuitBreaker_converge.state);
+      }
+
+      if (scenarioMode === 'unprotected') {
+        switch (scenario.id) {
+          case 'timeout': {
+            setStage('Đang gọi trực tiếp User Service không có Timeout (ngâm trễ 4 giây)…');
+            await requireOk(`${user}/api/chaos?delayMs=4000`, 'POST');
+            const start = performance.now();
+            setClock({ label: 'Gọi không Timeout (Treo luồng 4s)', targetMs: 4000, start });
+            try {
+              const res = await request(user + '/api/users/1');
+              setResult([{
+                body: { outcome: 'OK', user: res.body, elapsedMs: Math.round(performance.now() - start), attempts: 1 },
+                status: res.status,
+                measuredMs: Math.round(performance.now() - start)
+              }]);
+            } finally {
+              setClock(null);
+            }
+            break;
+          }
+          case 'retry': {
+            setStage('Đang gọi User Service KHÔNG qua Retry (gặp lỗi 500 chập chờn)…');
+            await requireOk(`${user}/api/chaos?failFirstN=2`, 'POST');
+            const response = await callOrder(base, '/no-protection/1');
+            setResult(response);
+            break;
+          }
+          case 'bulkhead': {
+            setStage('Đang gửi 10 lượt song song KHÔNG có Bulkhead (chiếm trọn 10 worker threads trong 2s)…');
+            await requireOk(`${user}/api/chaos?delayMs=2000`, 'POST');
+            const response = await callOrder(base, '/burst/no-protection?n=10');
+            setResult(response);
+            break;
+          }
+          case 'breaker': {
+            await requireOk(`${user}/api/chaos?failPercent=100`, 'POST');
+            const calls = [];
+            for (let index = 1; index <= 6; index += 1) {
+              setStage(`Đang gửi lượt ${index}/6 (KHÔNG có Circuit Breaker, mù quáng đập vào User Service đang chết)…`);
+              const res = await callOrder(base, '/no-protection/1');
+              calls.push(res);
+              setResult([...calls]);
+              await pause(200);
+            }
+            break;
+          }
+        }
+        return;
       }
       const query = { timeout: 'delayMs=4000', retry: 'failFirstN=2', bulkhead: 'delayMs=2000',
         breaker: 'failPercent=100', fallback: 'failPercent=100' }[scenario.id];
@@ -402,16 +453,84 @@ export default function App() {
                 </details>
               )}
 
-              <div className="controls">
-                <button className="primary" disabled={busy || !ready} onClick={run}>
-                  <Play size={17} />{scenario.action}
-                </button>
-                {needsRecovery && (
-                  <button className="reset probe-action-btn" disabled={busy || !ready} onClick={recover} title="Gửi đúng 2 lượt thăm dò theo chuẩn Resilience4j">
-                    <Play size={15} /> Gửi 2 lượt thăm dò (HALF-OPEN)
+              {['timeout', 'retry', 'bulkhead', 'breaker'].includes(scenario.id) && (
+                <div className="resilience-mode-selector">
+                  <div className="mode-selector-label">CHẾ ĐỘ KIỂM TRA & ĐỐI CHIẾU:</div>
+                  <div className="mode-tabs">
+                    <button
+                      type="button"
+                      className={`mode-tab protected ${scenarioMode === 'protected' ? 'active' : ''}`}
+                      onClick={() => { setScenarioMode('protected'); setResult(null); }}
+                      disabled={busy}
+                    >
+                      <ShieldCheck size={16} />
+                      <span>1. CÓ BẢO VỆ (Resilience Active)</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`mode-tab unprotected ${scenarioMode === 'unprotected' ? 'active' : ''}`}
+                      onClick={() => { setScenarioMode('unprotected'); setResult(null); }}
+                      disabled={busy}
+                    >
+                      <AlertTriangle size={16} />
+                      <span>2. KHÔNG BẢO VỆ (Xem sự cố sập)</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`mode-tab compare ${scenarioMode === 'compare' ? 'active' : ''}`}
+                      onClick={() => { setScenarioMode('compare'); }}
+                      disabled={busy}
+                    >
+                      <Activity size={16} />
+                      <span>3. SO SÁNH ĐỐI CHIẾU 2 BÊN</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {scenarioMode === 'unprotected' && ['timeout', 'retry', 'bulkhead', 'breaker'].includes(scenario.id) && (
+                <div className="unprotected-banner">
+                  <AlertTriangle size={18} className="unprotected-banner-icon" />
+                  <div>
+                    <strong>ĐANG Ở CHẾ ĐỘ: KHÔNG CÓ CƠ CHẾ BẢO VỆ (DISASTER BASELINE)</strong>
+                    <p>
+                      {scenario.id === 'timeout' && 'Không cấu hình Feign readTimeout (3s) và không dùng Resilience4j TimeLimiter (1.5s). Khi downstream nghẽn 4s, worker thread bị giam giữ, cạn kiệt Connection Pool và làm sập dây chuyền.'}
+                      {scenario.id === 'retry' && 'Không có Spring Retry hay Resilience4j Retry. Khi downstream trả lỗi 500 thoáng qua ở lần 1, Order Service đầu hàng ngay lập tức và ném lỗi 500 về Client làm sập giao dịch.'}
+                      {scenario.id === 'bulkhead' && 'Không có Resilience4j Bulkhead Semaphore. Toàn bộ 10 request song song ập vào chiếm trọn 10/10 worker threads của Order Service trong 2 giây, làm tê liệt các nghiệp vụ khác.'}
+                      {scenario.id === 'breaker' && 'Không có Resilience4j Circuit Breaker. Downstream chết 100% nhưng Order Service vẫn mù quáng gửi cả 6 request qua mạng, không có Fail-Fast (14ms), tiếp tục dội bom đối tác.'}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {scenarioMode !== 'compare' && (
+                <div className="controls">
+                  <button
+                    className={`primary ${scenarioMode === 'unprotected' ? 'unprotected-run-btn' : ''}`}
+                    disabled={busy || !ready}
+                    onClick={run}
+                  >
+                    {scenarioMode === 'unprotected' ? (
+                      <>
+                        <AlertTriangle size={17} />
+                        {scenario.id === 'timeout' && '⚠️ Chạy KHÔNG có Timeout (Xem ngâm treo luồng 4s)'}
+                        {scenario.id === 'retry' && '⚠️ Gọi KHÔNG có Retry (Xem sập ngay lần 1)'}
+                        {scenario.id === 'bulkhead' && '⚠️ Gửi 10 lượt KHÔNG có Bulkhead (Xem cạn kiệt 10 luồng)'}
+                        {scenario.id === 'breaker' && '⚠️ Gửi 6 lượt KHÔNG có Circuit Breaker (Mù quáng 6/6 lỗi)'}
+                      </>
+                    ) : (
+                      <>
+                        <Play size={17} />{scenario.action}
+                      </>
+                    )}
                   </button>
-                )}
-              </div>
+                  {scenarioMode === 'protected' && needsRecovery && (
+                    <button className="reset probe-action-btn" disabled={busy || !ready} onClick={recover} title="Gửi đúng 2 lượt thăm dò theo chuẩn Resilience4j">
+                      <Play size={15} /> Gửi 2 lượt thăm dò (HALF-OPEN)
+                    </button>
+                  )}
+                </div>
+              )}
               {busy && <div className="live-stage" role="status"><LoaderCircle className="spinner" size={15} aria-hidden="true" />{stage}</div>}
               {needsRecovery && !busy && !error && (
                 <div className="probe-reason-box">
@@ -460,13 +579,24 @@ export default function App() {
                     breakerState={scenario.id === 'converge' ? convergeBreaker : breaker}
                     runCount={runCount}
                     probeRunCount={probeRunCount}
-                    actionLabel={scenario.action}
+                    actionLabel={scenarioMode === 'unprotected' ? 'Chạy không bảo vệ' : scenario.action}
+                    scenarioMode={scenarioMode}
+                    isUnprotected={scenarioMode === 'unprotected'}
                   />
                 </div>
                 <div className="dashboard-results">
                   {clock && <TimeoutClock key={clock.start} clock={clock} />}
                   <div aria-live="polite" aria-busy={busy}>
-                    <DemoResults scenario={scenario.id} result={result} breaker={scenario.id === 'converge' ? convergeBreaker : breaker} busy={busy} error={error} view={resultView} onViewChange={setResultView} />
+                    <DemoResults
+                      scenario={scenario.id}
+                      result={result}
+                      breaker={scenario.id === 'converge' ? convergeBreaker : breaker}
+                      busy={busy}
+                      error={error}
+                      view={resultView}
+                      onViewChange={setResultView}
+                      scenarioMode={scenarioMode}
+                    />
                   </div>
                 </div>
               </div>

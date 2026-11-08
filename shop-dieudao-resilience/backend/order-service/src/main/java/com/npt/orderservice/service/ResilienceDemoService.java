@@ -59,6 +59,17 @@ public class ResilienceDemoService {
     }
 
     // =====================================================================
+    // DEMO 0: KHÔNG BẢO VỆ (Baseline - Để đối chứng khi thiếu Resilience)
+    // Gọi thẳng sang user-service không bọc bất kỳ cơ chế bảo vệ nào.
+    // =====================================================================
+    public DemoResult noProtection(Long userId) {
+        AtomicInteger attempts = new AtomicInteger();
+        return run("0-NO-PROTECTION", attempts, false, userId, () -> {
+            return callUser("no-protection", userId, attempts);
+        });
+    }
+
+    // =====================================================================
     // DEMO 1a: FEIGN TIMEOUT (Read Timeout 3s - Đúng chuẩn Topic 1)
     // Gọi thẳng OpenFeign client không qua Decorator nào; khi User Service trễ 4s,
     // Feign tự cắt sau 3s (readTimeout) và trả lỗi 504 FEIGN_TIMEOUT.
@@ -230,8 +241,9 @@ public class ResilienceDemoService {
             case "circuit-breaker" -> circuitBreaker(userId);
             case "combined" -> combined(userId, true);
             case "combined-nofallback" -> combined(userId, false);
+            case "no-protection" -> noProtection(userId);
             default -> throw new IllegalArgumentException(
-                    "pattern phải là: feign-timeout | timeout | retry | bulkhead | circuit-breaker | converge | combined | combined-nofallback");
+                    "pattern phải là: feign-timeout | timeout | retry | bulkhead | circuit-breaker | converge | combined | combined-nofallback | no-protection");
         };
     }
 
