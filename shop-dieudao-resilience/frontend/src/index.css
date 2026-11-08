@@ -414,6 +414,59 @@ footer span { margin: 0 4px; color: var(--accent); }
   cursor: not-allowed;
 }
 
+/* Stepper Gliding Controls */
+.stepper-group {
+  display: inline-flex;
+  align-items: center;
+  background: #130f2e;
+  border: 1px solid #362e6e;
+  border-radius: 8px;
+  padding: 2px 3px;
+  gap: 3px;
+}
+
+.stepper-btn {
+  border: none !important;
+  background: transparent !important;
+  padding: 5px 8px !important;
+  border-radius: 6px !important;
+  color: #c7d2fe !important;
+  font-size: 0.72rem !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.stepper-btn:hover:not(:disabled) {
+  background: #2b235e !important;
+  color: #ffffff !important;
+}
+
+.stepper-step-pill {
+  padding: 2px 8px;
+  background: #251d54;
+  color: #a5b4fc;
+  border-radius: 5px;
+  font-size: 0.71rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.speed-btn {
+  background: #19153a;
+  border-color: #3b3370;
+  color: #c7d2fe;
+}
+
+.speed-btn.slow-active {
+  background: #064e3b;
+  border-color: #10b981;
+  color: #a7f3d0;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.3);
+}
+
 .visualizer-standby {
   display: flex;
   align-items: center;

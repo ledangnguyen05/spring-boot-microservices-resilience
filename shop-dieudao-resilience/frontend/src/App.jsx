@@ -231,9 +231,10 @@ export default function App() {
         }
         case 'timeout': {
           const phases = [
-            ['Gọi trực tiếp User Service', 4000, () => request(user + '/api/users/1')],
-            ['Đo Feign read timeout', 3000, () => callOrder(base, '/feign-timeout/1')],
-            ['Đo Resilience4j TimeLimiter', 1500, () => callOrder(base, '/timeout/1')],
+            ['1/4: Gọi trực tiếp User Service (Không Timeout · Ngâm 4s)', 4000, () => request(user + '/api/users/1')],
+            ['2/4: Đo OpenFeign read timeout (Cắt sau 3.000ms)', 3000, () => callOrder(base, '/feign-timeout/1')],
+            ['3/4: Đo Spring 6 RestClient timeout (Cắt sau 2.500ms)', 2500, () => callOrder(base, '/restclient-timeout/1')],
+            ['4/4: Đo Resilience4j TimeLimiter (Cắt sau 1.500ms)', 1500, () => callOrder(base, '/timeout/1')],
           ];
           const responses = [];
           for (const [label, targetMs, call] of phases) {
@@ -251,9 +252,15 @@ export default function App() {
           break;
         }
         case 'retry': {
-          setStage('Đang gọi User Service qua cơ chế Retry (thử lại tự động nếu lỗi)…');
-          const response = await callOrder(base, '/retry/1');
-          setResult(response);
+          setStage('1/2: Đang đo Resilience4j Retry (tự thử lại với Exponential Backoff)…');
+          const r4jResponse = await callOrder(base, '/retry/1');
+          await requireOk(`${user}/api/chaos?failFirstN=2`, 'POST');
+          setStage('2/2: Đang đo Spring Retry (Spring RetryTemplate với Exponential Backoff)…');
+          const springResponse = await callOrder(base, '/spring-retry/1');
+          setResult([
+            { ...r4jResponse, library: 'Resilience4j Retry' },
+            { ...springResponse, library: 'Spring Retry' }
+          ]);
           break;
         }
         case 'bulkhead': {

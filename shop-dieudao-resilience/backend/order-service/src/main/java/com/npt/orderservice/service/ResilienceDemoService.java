@@ -49,13 +49,19 @@ public class ResilienceDemoService {
     private final UserResilientClient userClient;
     private final com.npt.orderservice.client.UserConvergeClient convergeClient;
     private final ResilienceKit kit;
+    private final org.springframework.web.client.RestClient restClient;
+    private final org.springframework.retry.support.RetryTemplate springRetryTemplate;
 
     public ResilienceDemoService(UserResilientClient userClient,
                                  com.npt.orderservice.client.UserConvergeClient convergeClient,
-                                 ResilienceKit kit) {
+                                 ResilienceKit kit,
+                                 org.springframework.web.client.RestClient restClient,
+                                 org.springframework.retry.support.RetryTemplate springRetryTemplate) {
         this.userClient = userClient;
         this.convergeClient = convergeClient;
         this.kit = kit;
+        this.restClient = restClient;
+        this.springRetryTemplate = springRetryTemplate;
     }
 
     // =====================================================================
@@ -82,6 +88,22 @@ public class ResilienceDemoService {
     }
 
     // =====================================================================
+    // DEMO 1c: RESTCLIENT TIMEOUT (Read Timeout 2.5s qua Spring 6 RestClient)
+    // Minh họa trọn vẹn chủ đề "Feign / RestClient timeout":
+    // Dùng SimpleClientHttpRequestFactory cấu hình readTimeout 2500ms.
+    // =====================================================================
+    public DemoResult restClientTimeout(Long userId) {
+        AtomicInteger attempts = new AtomicInteger();
+        return run("1c-RESTCLIENT-TIMEOUT", attempts, false, userId, () -> {
+            attempts.incrementAndGet();
+            return restClient.get()
+                    .uri("/{userId}", userId)
+                    .retrieve()
+                    .body(UserResponseDTO.class);
+        });
+    }
+
+    // =====================================================================
     // DEMO 1b: TIMEOUT (TimeLimiter 1.5s - Lớp bảo vệ thứ 2)
     // Vấn đề : user-service chậm -> thread của order-service bị treo chờ.
     // Giải pháp: TimeLimiter cắt sau demo.timeout.duration-ms (1.5s), trả lỗi 504 ngay.
@@ -101,7 +123,7 @@ public class ResilienceDemoService {
     }
 
     // =====================================================================
-    // DEMO 2: RETRY
+    // DEMO 2: RETRY (Resilience4j Retry)
     // Vấn đề : lỗi thoáng qua (mạng chớp, instance đang khởi động) -> gọi lại là khỏi.
     // Giải pháp: Retry tối đa 3 lần, chờ 500ms -> 1000ms (exponential backoff).
     // Thử    : POST /api/chaos?failFirstN=2  => lần 3 thành công.
@@ -132,8 +154,36 @@ public class ResilienceDemoService {
                     .withRetry(kit.retryOnly())
                     .get();
         });
-        return new DemoResult(result.pattern(), result.outcome(), result.httpStatus(), result.message(),
-                result.user(), result.attempts(), result.elapsedMs(), result.fallback(), List.copyOf(attemptResults));
+        return result.withAttemptResults(attemptResults);
+    }
+
+    // =====================================================================
+    // DEMO 2b: SPRING RETRY (qua Spring RetryTemplate với Exponential Backoff)
+    // Minh họa trọn vẹn chủ đề "Spring Retry / Resilience4j Retry":
+    // Dùng RetryTemplate của Spring Retry với maxAttempts=3, backoff 500ms, 1000ms.
+    // =====================================================================
+    public DemoResult springRetry(Long userId) {
+        AtomicInteger attempts = new AtomicInteger();
+        List<DemoResult.RetryAttempt> attemptResults = new ArrayList<>();
+        DemoResult result = run("2b-SPRING-RETRY", attempts, false, userId, () -> {
+            return springRetryTemplate.execute(context -> {
+                long start = System.nanoTime();
+                try {
+                    UserResponseDTO user = callUser("spring-retry", userId, attempts);
+                    long elapsed = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+                    attemptResults.add(new DemoResult.RetryAttempt(attempts.get(), 200, "OK", elapsed));
+                    return user;
+                } catch (RuntimeException failure) {
+                    Throwable cause = unwrap(failure);
+                    Integer status = cause instanceof FeignException feign && feign.status() > 0 ? feign.status() : null;
+                    long elapsed = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+                    String outcome = toFailure("2b-SPRING-RETRY", cause, attempts.get(), elapsed).outcome();
+                    attemptResults.add(new DemoResult.RetryAttempt(attempts.get(), status, outcome, elapsed));
+                    throw failure;
+                }
+            });
+        });
+        return result.withAttemptResults(attemptResults);
     }
 
     // =====================================================================
@@ -234,16 +284,18 @@ public class ResilienceDemoService {
     public DemoResult dispatch(String pattern, Long userId) {
         return switch (pattern) {
             case "feign-timeout" -> feignTimeout(userId);
+            case "restclient-timeout" -> restClientTimeout(userId);
             case "converge" -> converge(userId);
             case "timeout" -> timeout(userId);
             case "retry" -> retry(userId);
+            case "spring-retry" -> springRetry(userId);
             case "bulkhead" -> bulkhead(userId);
             case "circuit-breaker" -> circuitBreaker(userId);
             case "combined" -> combined(userId, true);
             case "combined-nofallback" -> combined(userId, false);
             case "no-protection" -> noProtection(userId);
             default -> throw new IllegalArgumentException(
-                    "pattern phải là: feign-timeout | timeout | retry | bulkhead | circuit-breaker | converge | combined | combined-nofallback | no-protection");
+                    "pattern phải là: feign-timeout | restclient-timeout | timeout | retry | spring-retry | bulkhead | circuit-breaker | converge | combined | combined-nofallback | no-protection");
         };
     }
 
@@ -369,9 +421,12 @@ public class ResilienceDemoService {
                 outcome = "UPSTREAM_4XX"; status = 502;
                 msg = "user-service trả lỗi HTTP " + fe.status();
             }
+        } else if (t instanceof org.springframework.web.client.ResourceAccessException) {
+            outcome = "RESTCLIENT_TIMEOUT"; status = 504;
+            msg = "RestClient read timeout (2.5s): " + (t.getCause() != null ? t.getCause().getMessage() : t.getMessage());
         } else if (t.getClass().getSimpleName().contains("Timeout")) {
             outcome = "TIMEOUT"; status = 504;
-            msg = "Hết thời gian chờ: " + t.getClass().getSimpleName();
+            msg = "TimeLimiter hết giờ (1.5s): " + (t.getCause() != null ? t.getCause().getMessage() : t.getMessage());
         } else {
             outcome = "ERROR"; status = 500;
             msg = t.getClass().getSimpleName() + ": " + t.getMessage();

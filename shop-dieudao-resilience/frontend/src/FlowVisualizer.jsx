@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import {
-  Play, Pause, RotateCcw, Activity, ArrowRight, CheckCircle2, AlertTriangle, ShieldAlert
+  Play, Pause, RotateCcw, Activity, ArrowRight, CheckCircle2, AlertTriangle, ShieldAlert,
+  ChevronLeft, ChevronRight, Gauge
 } from 'lucide-react';
 
 export default function FlowVisualizer({
@@ -17,20 +18,30 @@ export default function FlowVisualizer({
   // STRICT RULE: isPlaying is FALSE initially! It NEVER moves until user clicks!
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
+  const [speed, setSpeed] = useState(1); // 0.5 (Chậm rãi thuyết trình) | 1 (Chuẩn)
 
   const animTimeRef = useRef(0);
   const isPlayingRef = useRef(false);
   const lastTimeRef = useRef(performance.now());
   const reqIdRef = useRef(null);
+  const stepTargetTimeRef = useRef(null);
+  const isSteppingRef = useRef(false);
+  const speedRef = useRef(1);
 
   // Synchronize isPlaying with ref
   useEffect(() => {
     isPlayingRef.current = isPlaying;
   }, [isPlaying]);
 
+  useEffect(() => {
+    speedRef.current = speed;
+  }, [speed]);
+
   // When switching scenario: strictly STOP, reset to 0
   useEffect(() => {
     setIsPlaying(false);
+    isSteppingRef.current = false;
+    stepTargetTimeRef.current = null;
     animTimeRef.current = 0;
     setCurrentTime(0);
   }, [scenarioId]);
@@ -40,6 +51,8 @@ export default function FlowVisualizer({
     if (runCount > 0) {
       animTimeRef.current = 0;
       setCurrentTime(0);
+      isSteppingRef.current = false;
+      stepTargetTimeRef.current = null;
       setIsPlaying(true);
     }
   }, [runCount]);
@@ -49,19 +62,61 @@ export default function FlowVisualizer({
     if (probeRunCount > 0) {
       animTimeRef.current = 0;
       setCurrentTime(0);
+      isSteppingRef.current = false;
+      stepTargetTimeRef.current = null;
       setIsPlaying(true);
     }
   }, [probeRunCount]);
 
-  // High precision 60 FPS animation loop
+  // High precision 60 FPS animation loop with Smooth Gliding Stepper physics
   useEffect(() => {
     function tick(now) {
-      const delta = Math.min(now - lastTimeRef.current, 50);
+      const delta = Math.min(now - lastTimeRef.current, 50) * speedRef.current;
       lastTimeRef.current = now;
 
       if (isPlayingRef.current) {
-        animTimeRef.current += delta;
-        setCurrentTime(animTimeRef.current);
+        if (isSteppingRef.current && stepTargetTimeRef.current !== null) {
+          const target = stepTargetTimeRef.current;
+          const current = animTimeRef.current;
+
+          if (target > current) {
+            // Gliding forward smoothly to milestone
+            const stepDelta = Math.max(delta * 1.35, 12);
+            const next = current + stepDelta;
+            if (next >= target) {
+              animTimeRef.current = target;
+              setCurrentTime(target);
+              isSteppingRef.current = false;
+              stepTargetTimeRef.current = null;
+              setIsPlaying(false);
+            } else {
+              animTimeRef.current = next;
+              setCurrentTime(next);
+            }
+          } else if (target < current) {
+            // Gliding backward smoothly to milestone
+            const stepDelta = Math.max(delta * 1.5, 15);
+            const next = current - stepDelta;
+            if (next <= target) {
+              animTimeRef.current = target;
+              setCurrentTime(target);
+              isSteppingRef.current = false;
+              stepTargetTimeRef.current = null;
+              setIsPlaying(false);
+            } else {
+              animTimeRef.current = next;
+              setCurrentTime(next);
+            }
+          } else {
+            isSteppingRef.current = false;
+            stepTargetTimeRef.current = null;
+            setIsPlaying(false);
+          }
+        } else {
+          // Continuous play
+          animTimeRef.current += delta;
+          setCurrentTime(animTimeRef.current);
+        }
       }
 
       reqIdRef.current = requestAnimationFrame(tick);
@@ -84,7 +139,7 @@ export default function FlowVisualizer({
     else if (scenarioId === 'bulkhead') totalDuration = 6000;
     else if (scenarioId === 'breaker') totalDuration = 6500;
   } else {
-    if (scenarioId === 'timeout') totalDuration = 9500; // 3 runs: Direct (3.5s) -> Feign 3s (3.2s) -> TimeLimiter 1.5s (2.8s)
+    if (scenarioId === 'timeout') totalDuration = 12500; // 4 runs: Direct (4s) -> Feign 3s -> RestClient 2.5s -> TimeLimiter 1.5s
     else if (scenarioId === 'retry') totalDuration = 12000;
     else if (scenarioId === 'bulkhead') totalDuration = 6000;
     else if (scenarioId === 'breaker') totalDuration = isProbeMode ? 6500 : 7000;
@@ -271,23 +326,21 @@ export default function FlowVisualizer({
     } else {
       phaseMilestones = [
         { name: '1. Trực tiếp (Ngâm 4s - 200 OK)', time: 0 },
-        { name: '2. Feign (Cắt sau 3s - 504)', time: 3500 },
-        { name: '3. TimeLimiter (Cắt sau 1.5s - 504)', time: 6700 }
+        { name: '2. Feign (Cắt sau 3s - 504)', time: 3100 },
+        { name: '3. RestClient (Cắt sau 2.5s - 504)', time: 6200 },
+        { name: '4. TimeLimiter (Cắt sau 1.5s - 504)', time: 9300 }
       ];
 
       if (t > 0 || isPlaying) {
-        if (t < 3500) {
-          // RUN 1: Direct call to User Service (0 -> 3500ms)
-          // User hangs 4000ms, NO TIMEOUT GUARD -> hangs and returns 200 OK
-          const pT = t / 3500;
+        if (t < 3100) {
+          // RUN 1: Direct call to User Service (0 -> 3100ms)
+          const pT = t / 3100;
           if (pT < 0.25) {
-            // Gateway -> User directly
             const p = easeInOut(pT / 0.25);
             packetX = gwX + p * (userX - gwX);
             packetColor = '#6366f1';
             packetLabel = 'Lượt 1: Gọi trực tiếp User';
           } else if (pT < 0.75) {
-            // Hangs at User Service
             packetX = userX;
             isUserError = true;
             packetColor = '#f59e0b';
@@ -295,45 +348,41 @@ export default function FlowVisualizer({
             packetLabel = `TREO NGÂM ${waitS}s / 4.0s ⏳`;
             stationRing = { x: userX, y: userY, progress: (pT - 0.25) / 0.5, label: `${waitS}s` };
           } else {
-            // Finally returns 200 OK after full 4s
             const p = easeInOut((pT - 0.75) / 0.25);
             packetX = userX - p * (userX - gwX);
             packetColor = '#22c55e';
             packetLabel = '200 OK (Sau 4.016ms)';
           }
           narrative = {
-            stepTitle: 'Lượt đo 1/3 (Dòng 1 trên bảng): Gọi trực tiếp User Service — KHÔNG CÓ TIMEOUT',
+            stepTitle: 'Lượt đo 1/4 (Dòng 1 trên bảng): Gọi trực tiếp User Service — KHÔNG CÓ TIMEOUT',
             badge: 'Không có bảo vệ',
-            action: 'Gọi trực tiếp User Service (:8081) mà không qua cơ chế bảo vệ',
-            desc: 'User Service bị quá tải I/O giả lập 4.000ms. Do KHÔNG CÓ TIMEOUT bảo vệ, luồng xử lý bị treo chết ngâm kết nối suốt hơn 4 giây mới nhận được phản hồi 200 OK!',
-            resilience: 'HIỂM HỌA: Nếu hàng trăm khách hàng cùng gọi, connection pool sẽ cạn sạch trong chớp mắt, làm sập toàn bộ hệ thống.',
+            action: 'Gọi trực tiếp User Service (:8081) không qua chốt chặn timeout',
+            desc: 'User Service bị quá tải I/O giả lập 4.000ms. Do KHÔNG CÓ TIMEOUT bảo vệ, luồng xử lý bị treo ngâm socket suốt hơn 4 giây mới nhận được phản hồi 200 OK!',
+            resilience: 'HIỂM HỌA: Nếu nhiều người dùng cùng truy cập, thread pool và connection pool sẽ cạn kiệt nhanh chóng, dẫn tới sập dây chuyền (Cascading Failure).',
             statusColor: '#f59e0b',
             code: 'LƯỢT 1: TREO 4s (200 OK)'
           };
-        } else if (t < 6700) {
-          // RUN 2: Feign readTimeout = 3000ms (3500 -> 6700ms)
-          // Cuts connection after 3s, returns 504
-          const pT = (t - 3500) / 3200;
+        } else if (t < 6200) {
+          // RUN 2: Feign readTimeout = 3000ms (3100 -> 6200ms)
+          const pT = (t - 3100) / 3100;
           if (pT < 0.25) {
             const p = easeInOut(pT / 0.25);
             packetX = gwX + p * (userX - gwX);
             packetColor = '#6366f1';
-            packetLabel = 'Lượt 2: Feign readTimeout (3s)';
+            packetLabel = 'Lượt 2: OpenFeign (3s)';
           } else if (pT < 0.65) {
             packetX = userX;
             isUserError = true;
             packetColor = '#f59e0b';
             const waitS = ((pT - 0.25) / 0.4 * 3).toFixed(1);
-            packetLabel = `ĐẾM ĐẾN 3s: ${waitS}s ⏳`;
+            packetLabel = `FEIGN ĐẾM 3s: ${waitS}s ⏳`;
             stationRing = { x: orderX, y: orderY, progress: (pT - 0.25) / 0.4, label: `${waitS}s` };
           } else if (pT < 0.8) {
-            // Scissors cuts at 3s!
             pipe2Cut = true;
             packetX = (orderX + userX) / 2;
             packetColor = '#ef4444';
             packetLabel = 'FEIGN CẮT SAU 3s ✂️';
           } else {
-            // Returns 504 Gateway Timeout to Gateway
             pipe2Cut = true;
             const p = easeInOut((pT - 0.8) / 0.2);
             packetX = orderX - p * (orderX - gwX);
@@ -341,23 +390,58 @@ export default function FlowVisualizer({
             packetLabel = '504 GATEWAY TIMEOUT (3s)';
           }
           narrative = {
-            stepTitle: 'Lượt đo 2/3 (Dòng 2 trên bảng): OpenFeign readTimeout — CẮT SAU ĐÚNG 3.000ms',
-            badge: 'Tầng mạng Feign',
-            action: 'OpenFeign readTimeout: 3000ms đơn phương ngắt kết nối',
-            desc: 'User Service vẫn ngâm 4s, nhưng đúng mốc 3.000ms quy định trong cấu hình Feign, Feign tự động cắt đứt socket kết nối và trả mã HTTP 504 Gateway Timeout.',
-            resilience: 'Cắt giảm được 1 giây chờ đợi lãng phí, thu hồi tài nguyên socket mạng.',
+            stepTitle: 'Lượt đo 2/4 (Dòng 2 trên bảng): OpenFeign readTimeout — CẮT SAU ĐÚNG 3.000ms',
+            badge: 'Tầng Feign Client',
+            action: 'OpenFeign readTimeout: 3000ms đơn phương ngắt kết nối socket',
+            desc: 'User Service vẫn ngâm 4s, nhưng đúng mốc 3.000ms định cấu hình trong application.yml, Feign tự động hủy socket và trả mã HTTP 504 Gateway Timeout.',
+            resilience: 'Giải phóng kết nối socket sớm 1 giây so với gọi trực tiếp, ngăn rò rỉ tài nguyên mạng.',
             statusColor: '#ef4444',
             code: 'LƯỢT 2: FEIGN CẮT 3s'
           };
-        } else {
-          // RUN 3: Resilience4j TimeLimiter = 1500ms (6700 -> 9500ms)
-          // Cuts connection after 1.5s, returns 504 fastest!
-          const pT = (t - 6700) / 2800;
+        } else if (t < 9300) {
+          // RUN 3: Spring 6 RestClient readTimeout = 2500ms (6200 -> 9300ms)
+          const pT = (t - 6200) / 3100;
           if (pT < 0.25) {
             const p = easeInOut(pT / 0.25);
             packetX = gwX + p * (userX - gwX);
             packetColor = '#6366f1';
-            packetLabel = 'Lượt 3: TimeLimiter (1.5s)';
+            packetLabel = 'Lượt 3: RestClient (2.5s)';
+          } else if (pT < 0.65) {
+            packetX = userX;
+            isUserError = true;
+            packetColor = '#f59e0b';
+            const waitS = ((pT - 0.25) / 0.4 * 2.5).toFixed(1);
+            packetLabel = `RESTCLIENT 2.5s: ${waitS}s ⏳`;
+            stationRing = { x: orderX, y: orderY, progress: (pT - 0.25) / 0.4, label: `${waitS}s` };
+          } else if (pT < 0.8) {
+            pipe2Cut = true;
+            packetX = (orderX + userX) / 2;
+            packetColor = '#f97316';
+            packetLabel = 'RESTCLIENT CẮT 2.5s ✂️';
+          } else {
+            pipe2Cut = true;
+            const p = easeInOut((pT - 0.8) / 0.2);
+            packetX = orderX - p * (orderX - gwX);
+            packetColor = '#f97316';
+            packetLabel = '504 RESTCLIENT (2.5s)';
+          }
+          narrative = {
+            stepTitle: 'Lượt đo 3/4 (Dòng 3 trên bảng): Spring 6 RestClient — CẮT SAU 2.500ms',
+            badge: 'Tầng RestClient Spring 6',
+            action: 'SimpleClientHttpRequestFactory readTimeout: 2500ms ngắt kết nối',
+            desc: 'Sử dụng client HTTP hiện đại của Spring 6 (RestClient) với SimpleClientHttpRequestFactory cấu hình readTimeout=2500ms. Cắt sớm hơn Feign 500ms.',
+            resilience: 'Minh họa trọn vẹn chủ đề seminar Feign/RestClient timeout với cả 2 công nghệ Java microservices.',
+            statusColor: '#f97316',
+            code: 'LƯỢT 3: RESTCLIENT 2.5s'
+          };
+        } else {
+          // RUN 4: Resilience4j TimeLimiter = 1500ms (9300 -> 12500ms)
+          const pT = (t - 9300) / 3200;
+          if (pT < 0.25) {
+            const p = easeInOut(pT / 0.25);
+            packetX = gwX + p * (userX - gwX);
+            packetColor = '#6366f1';
+            packetLabel = 'Lượt 4: TimeLimiter (1.5s)';
           } else if (pT < 0.55) {
             packetX = userX;
             isUserError = true;
@@ -366,13 +450,11 @@ export default function FlowVisualizer({
             packetLabel = `ĐẾM ĐẾN 1.5s: ${waitS}s ⏳`;
             stationRing = { x: orderX, y: orderY, progress: (pT - 0.25) / 0.3, label: `${waitS}s` };
           } else if (pT < 0.75) {
-            // TimeLimiter cancels Future!
             pipe2Cut = true;
             packetX = (orderX + userX) / 2;
             packetColor = '#ec4899';
             packetLabel = 'TIMELIMITER CANCEL 1.5s ⏱️';
           } else {
-            // Returns 504
             pipe2Cut = true;
             const p = easeInOut((pT - 0.75) / 0.25);
             packetX = orderX - p * (orderX - gwX);
@@ -380,13 +462,13 @@ export default function FlowVisualizer({
             packetLabel = '504 TIMELIMITER (1.5s)';
           }
           narrative = {
-            stepTitle: 'Lượt đo 3/3 (Dòng 3 trên bảng): Resilience4j TimeLimiter — CẮT NHANH NHẤT (1.500ms)',
+            stepTitle: 'Lượt đo 4/4 (Dòng 4 trên bảng): Resilience4j TimeLimiter — CẮT NHANH NHẤT (1.500ms)',
             badge: 'Tầng ứng dụng Java',
             action: 'TimeLimiter timeoutDuration: 1500ms hủy CompletableFuture',
             desc: 'Resilience4j TimeLimiter bảo vệ ở tầng ứng dụng: Hủy Future ngay sau 1.500ms, giải phóng Worker Thread sớm nhất (tiết kiệm tới 2.5s so với gọi trực tiếp)!',
-            resilience: 'TimeLimiter là lá chắn phản ứng nhanh nhất, kết hợp cùng Feign (3s) tạo thành mô hình phòng thủ 2 lớp hoàn hảo.',
+            resilience: 'TimeLimiter là lá chắn phản ứng nhanh nhất, kết hợp cùng Feign (3s) và RestClient (2.5s) tạo thành mô hình phòng thủ nhiều lớp hoàn hảo.',
             statusColor: '#ec4899',
-            code: 'LƯỢT 3: TIMELIMITER 1.5s'
+            code: 'LƯỢT 4: TIMELIMITER 1.5s'
           };
         }
       }
@@ -1281,7 +1363,46 @@ export default function FlowVisualizer({
     }
   }
 
+  const currentMilestoneIndex = phaseMilestones.reduce((bestIdx, m, idx) => (
+    currentTime >= m.time - 60 ? idx : bestIdx
+  ), 0);
+
+  function stepTo(targetTime) {
+    stepTargetTimeRef.current = Math.max(0, Math.min(targetTime, totalDuration));
+    isSteppingRef.current = true;
+    lastTimeRef.current = performance.now();
+    setIsPlaying(true);
+  }
+
+  function handleNextStep() {
+    const current = animTimeRef.current;
+    const next = phaseMilestones.find((m) => m.time > current + 60);
+    if (next) {
+      stepTo(next.time);
+    } else if (current < totalDuration - 50) {
+      stepTo(totalDuration);
+    }
+  }
+
+  function handlePrevStep() {
+    const current = animTimeRef.current;
+    const prevList = phaseMilestones.filter((m) => m.time < current - 60);
+    if (prevList.length > 0) {
+      stepTo(prevList[prevList.length - 1].time);
+    } else {
+      stepTo(0);
+    }
+  }
+
+  function toggleSpeed() {
+    const newSpeed = speed === 1 ? 0.5 : 1;
+    setSpeed(newSpeed);
+    speedRef.current = newSpeed;
+  }
+
   function handlePlayToggle() {
+    isSteppingRef.current = false;
+    stepTargetTimeRef.current = null;
     if (isPlaying) {
       setIsPlaying(false);
     } else {
@@ -1294,15 +1415,15 @@ export default function FlowVisualizer({
   }
 
   function handleReset() {
+    isSteppingRef.current = false;
+    stepTargetTimeRef.current = null;
     setIsPlaying(false);
     animTimeRef.current = 0;
     setCurrentTime(0);
   }
 
   function jumpToMilestone(time) {
-    setIsPlaying(false);
-    animTimeRef.current = time;
-    setCurrentTime(time);
+    stepTo(time);
   }
 
   return (
@@ -1324,14 +1445,53 @@ export default function FlowVisualizer({
           <span className="live-badge" style={{ color: narrative.statusColor, borderColor: narrative.statusColor }}>
             ● {narrative.code}
           </span>
+
+          {/* Stepper Controls: Lướt tới/lùi từng diễn biến thật sự */}
+          <div className="stepper-group" role="group" aria-label="Điều khiển từng bước">
+            <button
+              className="vis-btn stepper-btn"
+              onClick={handlePrevStep}
+              disabled={currentTime <= 20}
+              title="Lướt lùi về diễn biến trước"
+            >
+              <ChevronLeft size={14} />
+              <span>Lùi bước</span>
+            </button>
+
+            <span className="stepper-step-pill" title="Mốc diễn biến hiện tại">
+              {phaseMilestones.length > 0 ? `Bước ${currentMilestoneIndex + 1}/${phaseMilestones.length}` : 'Bước 1/1'}
+            </span>
+
+            <button
+              className="vis-btn stepper-btn"
+              onClick={handleNextStep}
+              disabled={currentTime >= totalDuration - 20}
+              title="Lướt tiếp tới diễn biến sau"
+            >
+              <span>Tiếp theo</span>
+              <ChevronRight size={14} />
+            </button>
+          </div>
+
+          {/* Speed Toggle: 0.5x Chậm để thuyết trình vs 1.0x Chuẩn */}
           <button
-            className={`vis-btn play-btn ${isPlaying ? 'active' : ''}`}
-            onClick={handlePlayToggle}
-            title={isPlaying ? 'Tạm dừng chuyển động' : 'Phát chuyển động'}
+            className={`vis-btn speed-btn ${speed < 1 ? 'slow-active' : ''}`}
+            onClick={toggleSpeed}
+            title={speed === 1 ? 'Chuyển sang 0.5x (Chậm để thuyết trình/giải thích)' : 'Chuyển về 1.0x (Tốc độ chuẩn)'}
           >
-            {isPlaying ? <Pause size={13} /> : <Play size={13} />}
-            <span>{isPlaying ? 'Tạm dừng' : 'Phát lại'}</span>
+            <Gauge size={13} />
+            <span>{speed === 1 ? '1.0x' : '🐢 0.5x Chậm'}</span>
           </button>
+
+          <button
+            className={`vis-btn play-btn ${isPlaying && !isSteppingRef.current ? 'active' : ''}`}
+            onClick={handlePlayToggle}
+            title={isPlaying ? 'Tạm dừng chuyển động' : 'Tự động chạy trọn vẹn'}
+          >
+            {isPlaying && !isSteppingRef.current ? <Pause size={13} /> : <Play size={13} />}
+            <span>{isPlaying && !isSteppingRef.current ? 'Tạm dừng' : 'Tự chạy'}</span>
+          </button>
+
           <button className="vis-btn" onClick={handleReset} title="Xem lại từ đầu">
             <RotateCcw size={13} />
             <span>Đặt lại</span>

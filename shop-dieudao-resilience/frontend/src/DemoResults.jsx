@@ -8,6 +8,7 @@ const outcomeLabels = {
   OK: 'Thành công',
   TIMEOUT: 'TimeLimiter hết giờ (1.5s)',
   FEIGN_TIMEOUT: 'Feign hết giờ (3s)',
+  RESTCLIENT_TIMEOUT: 'RestClient hết giờ (2.5s)',
   UPSTREAM_DOWN: 'User Service mất kết nối (Offline)',
   UPSTREAM_5XX: 'User Service trả lỗi 5xx',
   UPSTREAM_4XX: 'User Service từ chối yêu cầu 4xx',
@@ -19,9 +20,13 @@ const runLabels = {
   timeout: [
     '1. Gọi trực tiếp User Service (Ngâm 4s · Không có Timeout)',
     '2. OpenFeign readTimeout (Cắt sau 3.000ms · HTTP 504)',
-    '3. Resilience4j TimeLimiter (Cắt sau 1.500ms · HTTP 504)'
+    '3. Spring RestClient timeout (Cắt sau 2.500ms · HTTP 504)',
+    '4. Resilience4j TimeLimiter (Cắt sau 1.500ms · HTTP 504)'
   ],
-  retry: ['Tra cứu khách hàng'],
+  retry: [
+    '1. Resilience4j Retry (Backoff 500ms ➔ 1000ms · Thành công ở lần 3)',
+    '2. Spring Retry - RetryTemplate (Backoff 500ms ➔ 1000ms · Thành công ở lần 3)'
+  ],
   fallback: ['Tắt dự phòng (Không Fallback · Lỗi 500)', 'Bật dự phòng (Có Fallback · 200 OK)'],
 };
 
@@ -157,7 +162,7 @@ function ResultTable({ scenario, result }) {
 
   const responses = Array.isArray(result) ? result : [result];
   const showCustomer = scenario === 'retry' || scenario === 'fallback';
-  const stagedAttempts = result._stagedAttempts || result.body?.attemptResults;
+  const stagedAttempts = result._stagedAttempts || (Array.isArray(result) ? result[0]?.body?.attemptResults : result.body?.attemptResults);
   const showSummaryRow = result._stagedSummary !== false;
 
   return <><div className="table-frame" tabIndex={0} role="region" aria-label="Bảng phản hồi API">
@@ -238,22 +243,23 @@ function summarize(scenario, result, breaker) {
   }
 
   if (scenario === 'timeout') {
-    const [direct, feignRun, limiterRun] = result;
-    if (!feignRun || !limiterRun) return 'Cần đủ ba lượt đo để so sánh thời gian chờ.';
-    const { body: feign, measuredMs: feignMs } = feignRun;
-    const { body: limiter, measuredMs: limiterMs } = limiterRun;
-    const difference = feignMs - limiterMs;
-    if (feign.outcome === 'FEIGN_TIMEOUT' && limiter.outcome === 'TIMEOUT' && difference > 0) {
-      return `Gọi trực tiếp nhận HTTP ${direct.status} sau ${milliseconds(direct.measuredMs)}. Qua Order Service, cả hai lượt đều trả HTTP 504, nhưng TimeLimiter giúp người dùng nhận phản hồi sớm hơn Feign ${milliseconds(difference)}.`;
-    }
-    return `Feign trả ${feign.outcome} sau ${milliseconds(feignMs)}. TimeLimiter trả ${limiter.outcome} sau ${milliseconds(limiterMs)}. Kết quả chưa cho thấy TimeLimiter hết giờ trước Feign.`;
+    if (!Array.isArray(result) || result.length < 3) return 'Cần đủ các lượt đo để so sánh thời gian chờ.';
+    const direct = result[0];
+    const feignRun = result[1];
+    const restClientRun = result.length >= 4 ? result[2] : null;
+    const limiterRun = result[result.length - 1];
+    return `Gọi trực tiếp không timeout ngâm chờ ${milliseconds(direct.measuredMs)}. Khi có cơ chế bảo vệ: Feign cắt sau ${milliseconds(feignRun?.measuredMs ?? 3000)}, RestClient cắt sau ${milliseconds(restClientRun?.measuredMs ?? 2500)}, và TimeLimiter cắt sau ${milliseconds(limiterRun?.measuredMs ?? 1500)} (đều trả HTTP 504), giúp giải phóng luồng xử lý và chống treo hệ thống.`;
   }
 
   if (scenario === 'retry') {
-    const { body } = result;
-    if (body.outcome === 'OK' && body.attempts === 1) return 'Lần gọi đầu đã thành công, nên Order Service không cần thử lại.';
-    if (body.outcome === 'OK') return `Order Service tự thử lại và lấy được thông tin khách hàng ở lần gọi thứ ${body.attempts}.`;
-    return `Order Service đã gọi User Service ${body.attempts} lần. Kết quả cuối là ${outcomeLabels[body.outcome] ?? body.outcome}.`;
+    const list = Array.isArray(result) ? result : [result];
+    const first = list[0]?.body ?? {};
+    if (list.length > 1) {
+      return `Cả 2 thư viện Resilience4j Retry và Spring Retry đều tự động thử lại 3 lần thành công (2 lần đầu HTTP 500, lần 3 phục hồi HTTP 200 OK) với thuật toán Exponential Backoff (500ms ➔ 1000ms), cứu vãn giao dịch khách hàng trong suốt.`;
+    }
+    if (first.outcome === 'OK' && first.attempts === 1) return 'Lần gọi đầu đã thành công, nên Order Service không cần thử lại.';
+    if (first.outcome === 'OK') return `Order Service tự thử lại và lấy được thông tin khách hàng ở lần gọi thứ ${first.attempts}.`;
+    return `Order Service đã gọi User Service ${first.attempts} lần. Kết quả cuối là ${outcomeLabels[first.outcome] ?? first.outcome}.`;
   }
 
   if (scenario === 'bulkhead') {

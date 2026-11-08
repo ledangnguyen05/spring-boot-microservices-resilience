@@ -51,6 +51,13 @@ public class ResilienceController {
         return reply(service.feignTimeout(userId));
     }
 
+    @Operation(summary = "Demo 1c: RestClient Timeout (Read Timeout 2.5s - Topic chính)",
+            description = "Gọi User Service qua Spring 6 RestClient với SimpleClientHttpRequestFactory (readTimeout = 2.5s), tự động ngắt kết nối khi quá hạn trả mã 504 TIMEOUT.")
+    @GetMapping("/restclient-timeout/{userId}")
+    public ResponseEntity<DemoResult> restClientTimeout(@PathVariable Long userId) {
+        return reply(service.restClientTimeout(userId));
+    }
+
     @Operation(summary = "Demo 1b: Timeout (TimeLimiter 1.5s - Lớp bảo vệ bổ sung)",
             description = "Sử dụng TimeLimiter cắt đứt lời gọi sau 1.5s nếu user-service phản hồi chậm, trả về mã 504 TIMEOUT.")
     @GetMapping("/timeout/{userId}")
@@ -58,11 +65,18 @@ public class ResilienceController {
         return reply(service.timeout(userId));
     }
 
-    @Operation(summary = "Demo 2: Retry (Thử lại)",
-            description = "Tự động thử lại tối đa 3 lần với exponential backoff (500ms, 1000ms...) khi gặp lỗi mạng hoặc 5xx thoáng qua.")
+    @Operation(summary = "Demo 2: Retry (Resilience4j Retry)",
+            description = "Tự động thử lại tối đa 3 lần với exponential backoff (500ms, 1000ms...) khi gặp lỗi mạng hoặc 5xx thoáng qua qua Resilience4j.")
     @GetMapping("/retry/{userId}")
     public ResponseEntity<DemoResult> retry(@PathVariable Long userId) {
         return reply(service.retry(userId));
+    }
+
+    @Operation(summary = "Demo 2b: Spring Retry (RetryTemplate)",
+            description = "Tự động thử lại tối đa 3 lần với exponential backoff qua thư viện chuẩn Spring Retry (RetryTemplate).")
+    @GetMapping("/spring-retry/{userId}")
+    public ResponseEntity<DemoResult> springRetry(@PathVariable Long userId) {
+        return reply(service.springRetry(userId));
     }
 
     @Operation(summary = "Demo 3: Bulkhead (Vách ngăn cách ly - Semaphore)",
