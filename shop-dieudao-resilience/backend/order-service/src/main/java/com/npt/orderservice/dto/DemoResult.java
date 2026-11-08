@@ -32,6 +32,10 @@ public record DemoResult(String pattern,
         this(pattern, outcome, httpStatus, message, user, attempts, elapsedMs, fallback, List.of());
     }
 
+    public DemoResult withAttemptResults(List<RetryAttempt> attemptResults) {
+        return new DemoResult(pattern, outcome, httpStatus, message, user, attempts, elapsedMs, fallback, attemptResults);
+    }
+
     public record RetryAttempt(int number, Integer httpStatus, String outcome, long elapsedMs) {}
 }
 
