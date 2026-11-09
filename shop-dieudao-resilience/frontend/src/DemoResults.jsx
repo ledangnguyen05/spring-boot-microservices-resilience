@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { Activity, AlertTriangle, Clock3, FileJson, ListChecks, ShieldCheck, Table2, Zap } from 'lucide-react';
 import { lessons, comparisons } from './demoLessons.js';
 
@@ -22,10 +22,6 @@ const runLabels = {
     '2. Tầng kết nối Feign (Ví dụ đặt hạn 3s · Hết giờ cắt)',
     '3. Tầng kết nối RestClient (Ví dụ đặt hạn 2.5s · Hết giờ cắt)',
     '4. Tầng nghiệp vụ TimeLimiter (Ví dụ đặt hạn 1.5s · Hết giờ cắt)'
-  ],
-  retry: [
-    '1. Thư viện Resilience4j Retry (Nghỉ 500ms ➔ 1000ms · Lần 3 thành công)',
-    '2. Thư viện Spring Retry (Nghỉ 500ms ➔ 1000ms · Lần 3 thành công)'
   ],
   fallback: ['Khi TẮT dữ liệu dự phòng (Trả thẳng lỗi 500)', 'Khi BẬT dữ liệu dự phòng (Trả dữ liệu tạm HTTP 200)'],
 };
@@ -57,14 +53,28 @@ function CallDetails({ rows, retry, customTitle }) {
         <th scope="col">Kết quả</th><th scope="col">Thời gian</th>
         {!retry && <th scope="col">Số lần gọi User</th>}
       </tr></thead>
-      <tbody>{rows.map(({ number, httpStatus, outcome, elapsedMs, attempts }) => (
-        <tr key={number}>
-          <th scope="row">#{number}</th>
-          <td><span className={`http-code ${httpStatus == null || httpStatus >= 400 ? 'http-error' : 'http-ok'}`}>{httpStatus ?? '—'}</span></td>
-          <td>{outcomeLabels[outcome] ?? outcome}</td><td className="numeric">{milliseconds(elapsedMs)}</td>
-          {!retry && <td className="numeric">{attempts}</td>}
-        </tr>
-      ))}</tbody>
+      <tbody>{rows.map(({ number, httpStatus, outcome, elapsedMs, attempts }, idx) => {
+        const failedWithNext = retry && idx < rows.length - 1 && (httpStatus == null || httpStatus >= 400);
+        const backoffMs = 500 * (2 ** idx);
+        return (
+          <Fragment key={number}>
+            <tr>
+              <th scope="row">#{number}</th>
+              <td><span className={`http-code ${httpStatus == null || httpStatus >= 400 ? 'http-error' : 'http-ok'}`}>{httpStatus ?? '—'}</span></td>
+              <td>{outcomeLabels[outcome] ?? outcome}</td><td className="numeric">{milliseconds(elapsedMs)}</td>
+              {!retry && <td className="numeric">{attempts}</td>}
+            </tr>
+            {failedWithNext && (
+              <tr style={{ background: '#fffbeb', color: '#92400e', fontSize: '0.78rem' }}>
+                <th scope="row" style={{ color: '#b45309' }}>⏳ Nghỉ</th>
+                <td><span className="http-code http-warn">Đợi</span></td>
+                <td>Nghỉ tăng dần (Backoff) trước khi thử lại #{number + 1}</td>
+                <td className="numeric" style={{ fontWeight: 700 }}>+{milliseconds(backoffMs)}</td>
+              </tr>
+            )}
+          </Fragment>
+        );
+      })}</tbody>
     </table>
   </div>;
 }
@@ -179,8 +189,33 @@ function ResultTable({ scenario, result }) {
           responses.map((item, index) => {
             const { body = {}, status, measuredMs } = item || {};
             let rowLabel = runLabels[scenario]?.[index];
+            let retrySubNote = null;
             if (!rowLabel) {
-              if (scenario === 'breaker') {
+              if (scenario === 'retry') {
+                const isSpring = body?.pattern === '2b-SPRING-RETRY' || index === 1;
+                const endpoint = isSpring ? '/spring-retry/1' : '/retry/1';
+                const patternTag = body?.pattern ?? (isSpring ? '2b-SPRING-RETRY' : '2-RETRY');
+                const usedAttempts = body?.attempts ?? 1;
+                const ok = body?.outcome === 'OK';
+                rowLabel = isSpring
+                  ? '2. Thư viện Spring Retry (RetryTemplate.execute)'
+                  : '1. Thư viện Resilience4j Retry (Decorators.withRetry)';
+                const statusSummary = ok
+                  ? (usedAttempts === 1
+                    ? 'Thành công ngay lần 1 (chưa cần Retry)'
+                    : usedAttempts === 2
+                      ? 'Lần 1 lỗi ➔ nghỉ 500ms ➔ thử lại lần đầu (#2) thành công luôn!'
+                      : `Lỗi ${usedAttempts - 1} lần đầu ➔ thành công ở lần #${usedAttempts}`)
+                  : `Thất bại sau ${usedAttempts} lần gọi`;
+                retrySubNote = (
+                  <small style={{ display: 'block', color: '#475569', marginTop: '3px', lineHeight: 1.45 }}>
+                    <code style={{ background: '#ede9fe', color: '#4338ca', padding: '1px 5px', borderRadius: '4px', fontWeight: 700 }}>
+                      GET ...{endpoint}
+                    </code>{' '}
+                    · pattern: <code>{patternTag}</code> · {statusSummary}
+                  </small>
+                );
+              } else if (scenario === 'breaker') {
                 if (index < 5) rowLabel = `Lượt ${index + 1}/6 (Mạch đang đóng CLOSED)`;
                 else if (index === 5) rowLabel = `Lượt 6/6 (Cầu dao NGẮT · Trả lỗi ngay trong ${measuredMs ?? 14}ms)`;
                 else if (index === 6) rowLabel = `Thăm dò 1/2 (Mạch đang mở hé HALF-OPEN)`;
@@ -194,6 +229,7 @@ function ResultTable({ scenario, result }) {
               <tr key={index}>
                 <th scope="row">
                   {rowLabel}
+                  {retrySubNote}
                   {scenario === 'breaker' && index === 5 && (
                     <small style={{ display: 'block', color: '#ef4444', fontWeight: 600, marginTop: '2px' }}>
                       ⚡ 0 lần gọi User · Chặn ngay tại cửa không cần gọi qua mạng
@@ -239,9 +275,9 @@ function ResultTable({ scenario, result }) {
               key={idx}
               rows={item.body.attemptResults}
               retry
-              customTitle={idx === 0
-                ? 'Chi tiết 3 lần gọi · Thư viện 1: Resilience4j Retry'
-                : 'Chi tiết 3 lần gọi · Thư viện 2: Spring Retry (RetryTemplate)'}
+              customTitle={item?.body?.pattern === '2b-SPRING-RETRY' || idx === 1
+                ? `Chi tiết ${item.body.attemptResults.length} lần gọi · Thư viện 2: Spring Retry (pattern: ${item.body.pattern})`
+                : `Chi tiết ${item.body.attemptResults.length} lần gọi · Thư viện 1: Resilience4j Retry (pattern: ${item.body.pattern})`}
             />
           ) : null
         ))
@@ -272,8 +308,15 @@ function summarize(scenario, result, breaker) {
   if (scenario === 'retry') {
     const list = Array.isArray(result) ? result : [result];
     const first = list[0]?.body ?? {};
+    const second = list[1]?.body;
     if (list.length > 1) {
-      return `Cả 2 thư viện Resilience4j Retry và Spring Retry đều hoạt động giống nhau: tự động thử lại khi gặp lỗi 500 ở 2 lần đầu, giữ khoảng nghỉ (500ms rồi 1000ms) và lấy được dữ liệu thành công (HTTP 200) ở lần thứ 3.`;
+      const att = first.attempts ?? 3;
+      const ms1 = first.elapsedMs;
+      const ms2 = second?.elapsedMs;
+      if (att === 2 && first.outcome === 'OK') {
+        return `Khi lần 1 lỗi và lần Retry đầu (#2) thành công luôn: cả Resilience4j Retry (${milliseconds(ms1)}) và Spring Retry (${milliseconds(ms2)}) chỉ nghỉ đúng 500ms rồi dừng ngay ở lần #2 (KHÔNG chờ thêm 1.000ms hay gọi lần 3). Chênh lệch vài ms giữa 2 thư viện là dao động mạng TCP/lịch ngủ thread thực tế.`;
+      }
+      return `Cả 2 thư viện Resilience4j Retry (${milliseconds(ms1)}, pattern "${first.pattern}") và Spring Retry (${milliseconds(ms2)}, pattern "${second?.pattern}") đều gọi thật sang API riêng và cho kết quả giống nhau (HTTP 200 ở lần #${att}). Chênh lệch vài ms nhỏ là dao động tự nhiên của mạng localhost và hẹn giờ ngủ thread.`;
     }
     if (first.outcome === 'OK' && first.attempts === 1) return 'Lần gọi đầu đã thành công ngay, nên không cần thử lại.';
     if (first.outcome === 'OK') return `Hệ thống tự thử lại và lấy thành công thông tin khách ở lần thứ ${first.attempts} (khách hàng không bị báo lỗi).`;
@@ -349,10 +392,18 @@ function describeProcess(scenario, result, breaker) {
       const list = Array.isArray(result) ? result : [result];
       const firstBody = list[0]?.body;
       if (!firstBody?.attemptResults?.length) return [];
+      const att = firstBody.attempts ?? firstBody.attemptResults.length;
+      if (att === 2 && firstBody.outcome === 'OK') {
+        return [
+          'User Service được giả lập bị lỗi ở duy nhất lần gọi đầu tiên (HTTP 500) rồi phục hồi ngay ở lần 2.',
+          'Gặp lỗi lần 1, hệ thống nghỉ 500ms rồi thử lại. Vì lần thử lại đầu tiên (#2) thành công (200 OK) nên vòng lặp Retry kết thúc NGAY — không mất công chờ thêm 1.000ms hay gọi lần 3.',
+          'Hai endpoint tách biệt (/retry/1 chạy Decorators.withRetry và /spring-retry/1 chạy RetryTemplate.execute) đều hoàn tất trong ~515–530ms (dao động vài ms do độ trễ mạng thật).',
+        ];
+      }
       return [
         'User Service được giả lập bị lỗi tạm thời (HTTP 500) ở 2 lần gọi đầu tiên rồi tự hết ở lần thứ 3.',
-        'Cả Resilience4j Retry lẫn Spring Retry đều giữ người dùng chờ trong âm thầm: gặp lỗi lần 1 nghỉ 500ms rồi gọi lại; lỗi lần 2 nghỉ tiếp 1.000ms rồi gọi lại lần 3.',
-        'Ở lần thứ 3, User Service đã khỏe lại và trả dữ liệu thành công (HTTP 200 OK).',
+        'Cả Resilience4j Retry (/retry/1) lẫn Spring Retry (/spring-retry/1) đều giữ người dùng chờ trong âm thầm: lỗi lần 1 nghỉ 500ms ➔ lỗi lần 2 nghỉ tiếp 1.000ms ➔ gọi lại lần 3.',
+        'Ở lần thứ 3, User Service đã khỏe lại và trả dữ liệu thành công (200 OK). Tổng thời gian ~1.520–1.540ms (gồm ~20ms mạng + 1.500ms nghỉ backoff + vài ms sai số lịch trình hệ điều hành).',
       ];
     }
     case 'bulkhead':

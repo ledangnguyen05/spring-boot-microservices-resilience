@@ -82,6 +82,7 @@ export default function App() {
   const [probeRunCount, setProbeRunCount] = useState(0);
   const [dashboardLayout, setDashboardLayout] = useState('stacked'); // 'stacked' (full-width) or 'split' (2-column)
   const [scenarioMode, setScenarioMode] = useState('protected'); // 'protected' | 'unprotected' | 'compare'
+  const [retryFailCount, setRetryFailCount] = useState(2); // 1 (lần đầu retry OK luôn) | 2 (lần 3 mới OK)
   const running = useRef(false);
   const scenario = scenarios[selected];
   const lesson = lessons[scenario.id];
@@ -215,7 +216,7 @@ export default function App() {
         }
         return;
       }
-      const query = { timeout: 'delayMs=4000', retry: 'failFirstN=2', bulkhead: 'delayMs=2000',
+      const query = { timeout: 'delayMs=4000', retry: `failFirstN=${retryFailCount}`, bulkhead: 'delayMs=2000',
         breaker: 'failPercent=100', fallback: 'failPercent=100' }[scenario.id];
       if (query) await requireOk(`${user}/api/chaos?${query}`, 'POST');
       setStage('Đang gọi Order Service…');
@@ -253,12 +254,12 @@ export default function App() {
           break;
         }
         case 'retry': {
-          setStage('1/2: Đang chạy Resilience4j Retry (tự thử lại 3 lần)…');
+          setStage(`1/2: Đang chạy Resilience4j Retry (lỗi ${retryFailCount} lần đầu)…`);
           const r4jResponse = await callOrder(base, '/retry/1');
           const item1 = { ...r4jResponse, library: 'Resilience4j Retry' };
           setResult([item1]);
-          await requireOk(`${user}/api/chaos?failFirstN=2`, 'POST');
-          setStage('2/2: Đang chạy Spring Retry (RetryTemplate tự thử lại 3 lần)…');
+          await requireOk(`${user}/api/chaos?failFirstN=${retryFailCount}`, 'POST');
+          setStage(`2/2: Đang chạy Spring Retry RetryTemplate (lỗi ${retryFailCount} lần đầu)…`);
           const springResponse = await callOrder(base, '/spring-retry/1');
           const item2 = { ...springResponse, library: 'Spring Retry' };
           setResult([item1, item2]);
@@ -511,6 +512,30 @@ export default function App() {
                 </div>
               )}
 
+              {scenario.id === 'retry' && scenarioMode === 'protected' && (
+                <div className="resilience-mode-selector" style={{ marginTop: '0.2rem' }}>
+                  <div className="mode-selector-label">GIẢ LẬP SỐ LẦN LỖI TRƯỚC KHI HỒI PHỤC:</div>
+                  <div className="layout-switcher" style={{ width: 'fit-content' }}>
+                    <button
+                      type="button"
+                      className={`layout-btn ${retryFailCount === 1 ? 'active' : ''}`}
+                      disabled={busy}
+                      onClick={() => { setRetryFailCount(1); setResult(null); }}
+                    >
+                      Lỗi 1 lần đầu (Thử lại phát đầu #2 thành công luôn)
+                    </button>
+                    <button
+                      type="button"
+                      className={`layout-btn ${retryFailCount === 2 ? 'active' : ''}`}
+                      disabled={busy}
+                      onClick={() => { setRetryFailCount(2); setResult(null); }}
+                    >
+                      Lỗi 2 lần đầu (Nghỉ 500ms + 1.000ms ➔ Lần #3 thành công)
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {scenarioMode !== 'compare' && (
                 <div className="controls">
                   <button
@@ -580,7 +605,7 @@ export default function App() {
 
               <div className={`demo-dashboard layout-${dashboardLayout}`}>
                 <div className="dashboard-visualizer">
-                  <ErrorBoundary resetKey={`${scenario.id}:${scenarioMode}:${runCount}:${probeRunCount}`} onReset={() => setResult(null)}>
+                  <ErrorBoundary resetKey={`${scenario.id}:${scenarioMode}:${retryFailCount}:${runCount}:${probeRunCount}`} onReset={() => setResult(null)}>
                     <FlowVisualizer
                       scenarioId={scenario.id}
                       busy={busy}
@@ -591,6 +616,7 @@ export default function App() {
                       actionLabel={scenarioMode === 'unprotected' ? 'Chạy không bảo vệ' : scenario.action}
                       scenarioMode={scenarioMode}
                       isUnprotected={scenarioMode === 'unprotected'}
+                      retryFailCount={retryFailCount}
                     />
                   </ErrorBoundary>
                 </div>

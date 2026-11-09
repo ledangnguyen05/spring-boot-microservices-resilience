@@ -154,7 +154,17 @@ public class ResilienceDemoService {
                     .withRetry(kit.retryOnly())
                     .get();
         });
-        return result.withAttemptResults(attemptResults);
+        return new DemoResult(
+                result.pattern(),
+                result.outcome(),
+                result.httpStatus(),
+                result.message() + " [Thư viện: Resilience4j Retry · Decorators.withRetry]",
+                result.user(),
+                result.attempts(),
+                result.elapsedMs(),
+                result.fallback(),
+                attemptResults
+        );
     }
 
     // =====================================================================
@@ -179,11 +189,23 @@ public class ResilienceDemoService {
                     long elapsed = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
                     String outcome = toFailure("2b-SPRING-RETRY", cause, attempts.get(), elapsed).outcome();
                     attemptResults.add(new DemoResult.RetryAttempt(attempts.get(), status, outcome, elapsed));
+                    log.warn("[SPRING-RETRY RetryTemplate] lần thử #{} (retryCount={}) thất bại ({})",
+                            attempts.get(), context.getRetryCount(), cause.getClass().getSimpleName());
                     throw failure;
                 }
             });
         });
-        return result.withAttemptResults(attemptResults);
+        return new DemoResult(
+                result.pattern(),
+                result.outcome(),
+                result.httpStatus(),
+                result.message() + " [Thư viện: Spring Retry · RetryTemplate.execute]",
+                result.user(),
+                result.attempts(),
+                result.elapsedMs(),
+                result.fallback(),
+                attemptResults
+        );
     }
 
     // =====================================================================

@@ -13,7 +13,8 @@ export default function FlowVisualizer({
   probeRunCount = 0,
   actionLabel = 'Chạy kịch bản',
   scenarioMode = 'protected',
-  isUnprotected = false
+  isUnprotected = false,
+  retryFailCount = 2
 }) {
   // STRICT RULE: isPlaying is FALSE initially! It NEVER moves until user clicks!
   const [isPlaying, setIsPlaying] = useState(false);
@@ -37,14 +38,14 @@ export default function FlowVisualizer({
     speedRef.current = speed;
   }, [speed]);
 
-  // When switching scenario or mode: strictly STOP, reset to 0
+  // When switching scenario, mode or retry fail preset: strictly STOP, reset to 0
   useEffect(() => {
     setIsPlaying(false);
     isSteppingRef.current = false;
     stepTargetTimeRef.current = null;
     animTimeRef.current = 0;
     setCurrentTime(0);
-  }, [scenarioId, scenarioMode]);
+  }, [scenarioId, scenarioMode, retryFailCount]);
 
   // When user clicks the main Run button in App, START the natural flow!
   useEffect(() => {
@@ -140,7 +141,7 @@ export default function FlowVisualizer({
     else if (scenarioId === 'breaker') totalDuration = 6500;
   } else {
     if (scenarioId === 'timeout') totalDuration = 12500; // 4 runs: Direct (4s) -> Feign 3s -> RestClient 2.5s -> TimeLimiter 1.5s
-    else if (scenarioId === 'retry') totalDuration = 12000;
+    else if (scenarioId === 'retry') totalDuration = retryFailCount === 1 ? 8200 : 12000;
     else if (scenarioId === 'bulkhead') totalDuration = 6000;
     else if (scenarioId === 'breaker') totalDuration = isProbeMode ? 6500 : 7000;
     else if (scenarioId === 'converge') totalDuration = 12500;
@@ -547,15 +548,23 @@ export default function FlowVisualizer({
         }
       }
     } else {
-      phaseMilestones = [
-        { name: '1. Gửi yêu cầu', time: 0 },
-        { name: '2. Thử lần 1 (500)', time: 1200 },
-        { name: '3. Nghỉ 500ms', time: 3200 },
-        { name: '4. Thử lần 2 (500)', time: 4600 },
-        { name: '5. Nghỉ 1000ms', time: 6600 },
-        { name: '6. Thử lần 3 (200 OK)', time: 8400 },
-        { name: '7. Trả về Client', time: 10800 }
-      ];
+      phaseMilestones = retryFailCount === 1
+        ? [
+            { name: '1. Gửi yêu cầu', time: 0 },
+            { name: '2. Thử lần 1 (500)', time: 1200 },
+            { name: '3. Nghỉ 500ms', time: 3200 },
+            { name: '4. Thử lần 2 (200 OK!)', time: 4600 },
+            { name: '5. Trả về Client', time: 6900 }
+          ]
+        : [
+            { name: '1. Gửi yêu cầu', time: 0 },
+            { name: '2. Thử lần 1 (500)', time: 1200 },
+            { name: '3. Nghỉ 500ms', time: 3200 },
+            { name: '4. Thử lần 2 (500)', time: 4600 },
+            { name: '5. Nghỉ 1000ms', time: 6600 },
+            { name: '6. Thử lần 3 (200 OK)', time: 8400 },
+            { name: '7. Trả về Client', time: 10800 }
+          ];
 
       if (t > 0 || isPlaying) {
         if (t < 1200) {
@@ -615,6 +624,50 @@ export default function FlowVisualizer({
             statusColor: '#f59e0b',
             code: 'NGHỈ 500ms'
           };
+        } else if (retryFailCount === 1) {
+          if (t < 5800) {
+            const p = easeInOut((t - 4600) / 1200);
+            packetX = orderX + p * (userX - orderX);
+            packetColor = '#22c55e';
+            packetLabel = 'Lần 2: Thành công ngay ✅';
+            narrative = {
+              stepTitle: 'Bước 3/4: Thử lại lần đầu (#2) — Thành công luôn (HTTP 200 OK)!',
+              badge: 'Thành công ngay lần #2',
+              action: 'Lần 2 User Service đã khỏe ➔ trả về 200 OK',
+              desc: 'Sau khi nghỉ 500ms, Order Service gọi lại lần #2 (lần retry đầu tiên). User Service đã hồi phục và trả về 200 OK ngay nên hệ thống DỪNG luôn, không chờ 1000ms hay gọi lần 3!',
+              resilience: 'Retry thông minh: Thành công ở lần nào là trả kết quả ngay ở lần đó, không chạy thừa.',
+              statusColor: '#22c55e',
+              code: 'LẦN 2: 200 OK'
+            };
+          } else if (t < 6900) {
+            const p = easeInOut((t - 5800) / 1100);
+            packetX = userX - p * (userX - orderX);
+            packetColor = '#22c55e';
+            packetLabel = '200 OK (Dữ liệu khách)';
+            narrative = {
+              stepTitle: 'Nhận dữ liệu — Order Service ghép thông tin đơn hàng',
+              badge: 'Đủ dữ liệu',
+              action: 'User Service trả họ tên, địa chỉ về Order Service',
+              desc: 'Order Service nhận được thông tin khách hàng ngay sau lần thử lại đầu tiên.',
+              resilience: 'Tổng thời gian chỉ mất ~515ms thay vì ~1.520ms.',
+              statusColor: '#22c55e',
+              code: 'GHÉP DỮ LIỆU'
+            };
+          } else {
+            const p = easeInOut((t - 6900) / 1300);
+            packetX = orderX - p * (orderX - gwX);
+            packetColor = '#22c55e';
+            packetLabel = 'HTTP 200 OK ✅';
+            narrative = {
+              stepTitle: 'Hoàn tất — Trả kết quả thành công về cho khách hàng',
+              badge: 'Xong ngay ở lần #2',
+              action: 'Trả đơn hàng đầy đủ kèm HTTP 200 OK (~515ms)',
+              desc: 'Chỉ mất 2 lần gọi và 1 lần nghỉ 500ms. Kết thúc ngay khi thành công!',
+              resilience: 'Giảm thiểu thời gian chờ tối đa cho người dùng.',
+              statusColor: '#22c55e',
+              code: 'HTTP 200 OK'
+            };
+          }
         } else if (t < 5600) {
           const p = easeInOut((t - 4600) / 1000);
           packetX = orderX + p * (userX - orderX);
@@ -1675,7 +1728,7 @@ export default function FlowVisualizer({
                     <>
                       <text x="85" y="28" textAnchor="middle" fill="#38bdf8" fontSize="12" fontWeight="bold">🔄 Retry (R4j &amp; Spring)</text>
                       <text x="85" y="48" textAnchor="middle" fill="#cbd5e1" fontSize="11" fontWeight="600">Tối đa 3 lần · Nghỉ tăng dần</text>
-                      <text x="85" y="68" textAnchor="middle" fill="#4ade80" fontSize="12" fontWeight="bold">Tự cứu ở lần 3</text>
+                      <text x="85" y="68" textAnchor="middle" fill="#4ade80" fontSize="12" fontWeight="bold">{retryFailCount === 1 ? 'Thành công ngay lần 2' : 'Tự cứu ở lần 3'}</text>
                     </>
                   )}
                   {scenarioId === 'bulkhead' && (
