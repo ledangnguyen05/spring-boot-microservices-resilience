@@ -5,6 +5,7 @@ import {
   UserRound, Zap,
 } from 'lucide-react';
 import DemoResults, { TimeoutClock } from './DemoResults.jsx';
+import ErrorBoundary from './ErrorBoundary.jsx';
 import FlowVisualizer from './FlowVisualizer.jsx';
 import { lessons } from './demoLessons.js';
 
@@ -18,30 +19,30 @@ const scenarios = [
     chapter: 'KHỞI ĐỘNG',
     detail: 'Order Service đọc đơn hàng và lấy thông tin khách hàng tương ứng từ User Service.',
     condition: 'Không giả lập lỗi', action: 'Xem thông tin đơn hàng', question: 'Đơn hàng trả về dữ liệu gì?' },
-  { id: 'timeout', name: 'Timeout', icon: Clock3, label: 'Topic 1 · Feign Timeout', title: 'Khách hàng đang chờ',
+  { id: 'timeout', name: 'Timeout', icon: Clock3, label: 'Topic 1 · Giới hạn chờ', title: 'Đặt thời gian chờ tối đa (Timeout)',
     chapter: 'CHỦ ĐỀ 01',
-    detail: 'Đo phản hồi trực tiếp sau khoảng 4 giây, rồi xem Feign (3s) và TimeLimiter (1.5s) dừng chờ ở mốc nào.',
-    condition: 'Trễ 4 giây', action: 'So sánh thời gian chờ', question: 'Hệ thống chờ bao lâu?' },
-  { id: 'retry', name: 'Retry', icon: RefreshCw, label: 'Topic 2 · Lỗi tạm thời', title: 'Lỗi hai lần rồi hồi phục',
+    detail: 'Cố tình làm User Service chậm 4 giây để quan sát sự khác nhau giữa: không cài Timeout, Timeout ở lớp kết nối HTTP (Feign 3s / RestClient 2.5s), và Timeout ở lớp ứng dụng (TimeLimiter 1.5s).',
+    condition: 'Chậm 4 giây', action: 'Kiểm tra các lớp Timeout', question: 'Hai lớp Timeout bảo vệ thế nào?' },
+  { id: 'retry', name: 'Retry', icon: RefreshCw, label: 'Topic 2 · Tự thử lại', title: 'Lỗi 2 lần đầu rồi tự hồi phục',
     chapter: 'CHỦ ĐỀ 02',
-    detail: 'User Service trả lỗi ở hai lần gọi đầu. Order Service tự thử lại trong cùng một yêu cầu với Exponential Backoff.',
-    condition: 'Hai lỗi HTTP 500', action: 'Thử lấy thông tin khách', question: 'Có thể tự thử lại không?' },
-  { id: 'bulkhead', name: 'Bulkhead', icon: Layers3, label: 'Topic 3 · Lưu lượng tăng', title: 'Mười lượt đến cùng lúc',
+    detail: 'User Service bị lỗi tạm thời ở 2 lần gọi đầu. Hệ thống tự động thử lại (chạy cả Resilience4j Retry lẫn Spring Retry) kèm khoảng nghỉ tăng dần nên lần thứ 3 vẫn thành công.',
+    condition: 'Lỗi 2 lần đầu', action: 'Thử lấy thông tin khách', question: 'Tự thử lại có cứu được đơn hàng?' },
+  { id: 'bulkhead', name: 'Bulkhead', icon: Layers3, label: 'Topic 3 · Giới hạn luồng', title: '10 người bấm cùng lúc',
     chapter: 'CHỦ ĐỀ 03',
-    detail: 'Mỗi lượt mất 2 giây. Order Service chỉ cấp ba suất gọi User Service đồng thời, quá tải từ chối 429 ngay.',
-    condition: '10 lượt · 3 suất', action: 'Gửi 10 lượt song song', question: 'Nhận được bao nhiêu lượt?' },
-  { id: 'breaker', name: 'Circuit Breaker', icon: Zap, label: 'Topic 4 · Lỗi liên tục', title: 'Tạm ngừng gọi dịch vụ lỗi',
+    detail: 'Mỗi lượt xử lý mất 2 giây. Bulkhead giới hạn tối đa 3 người được xử lý cùng lúc, 7 người đến sau bị báo bận ngay để tránh treo toàn bộ máy chủ.',
+    condition: '10 lượt · tối đa 3 chỗ', action: 'Gửi 10 lượt cùng lúc', question: 'Hệ thống nhận tối đa bao nhiêu lượt?' },
+  { id: 'breaker', name: 'Circuit Breaker', icon: Zap, label: 'Topic 4 · Cầu dao tự ngắt', title: 'Ngừng gọi khi dịch vụ đang lỗi',
     chapter: 'CHỦ ĐỀ 04',
-    detail: 'User Service liên tục trả lỗi. Quan sát khi Order Service chuyển sang OPEN chặn đứng các lời gọi mới.',
-    condition: '100% lỗi HTTP 500', action: 'Gửi 6 lượt liên tiếp', question: 'Khi nào nên ngừng gọi?' },
-  { id: 'converge', name: 'Hội tụ 4 topic', icon: Network, label: 'Tổng hợp · Cả 4 cùng chạy', title: 'Bốn cơ chế bảo vệ cùng một lời gọi',
+    detail: 'Khi User Service lỗi liên tiếp quá 50%, cầu dao sẽ tự ngắt (chuyển sang OPEN) để chặn ngay các cuộc gọi mới tại cửa, không dội thêm tải vào dịch vụ đang hỏng.',
+    condition: 'Lỗi liên tiếp 100%', action: 'Gửi 6 lượt liên tiếp', question: 'Khi nào cầu dao ngắt mạch?' },
+  { id: 'converge', name: 'Hội tụ 4 topic', icon: Network, label: 'Tổng hợp · Cả 4 cùng chạy', title: 'Kết hợp cả 4 cơ chế trong 1 luồng',
     chapter: 'HỘI TỤ 4 TOPIC',
-    detail: 'Một đường gọi duy nhất: Retry → Circuit Breaker → Bulkhead → Feign timeout. Kịch bản tự động chạy qua 5 pha để thấy trọn vẹn vòng đời: lọc tải, tự cứu, tự bảo vệ fail-fast, và tự chữa lành về 200 OK.',
-    condition: '5 pha · tự chữa lành', action: 'Chạy trọn vẹn 5 pha', question: 'Cơ chế nào ra tay và kết quả ra sao ở mỗi pha?' },
-  { id: 'fallback', name: 'Fallback & Kết hợp', icon: ShieldCheck, label: 'Bonus · Mở rộng', title: 'Vẫn có dữ liệu để hiển thị',
+    detail: 'Một luồng xử lý hoàn chỉnh ghép cả 4 lớp bảo vệ theo thứ tự: Retry ➔ Circuit Breaker ➔ Bulkhead ➔ Timeout. Xem cả 5 giai đoạn từ lọc tải, tự cứu, ngắt cầu dao đến tự mở lại.',
+    condition: '5 giai đoạn · khép kín', action: 'Chạy trọn vẹn 5 giai đoạn', question: 'Mỗi cơ chế làm gì qua từng giai đoạn?' },
+  { id: 'fallback', name: 'Fallback & Kết hợp', icon: ShieldCheck, label: 'Bonus · Dữ liệu tạm', title: 'Trả dữ liệu tạm khi mọi cách đều lỗi',
     chapter: 'MỞ RỘNG (BONUS)',
-    detail: 'So sánh phản hồi của luồng kết hợp khi bật và tắt dữ liệu khách hàng dự phòng.',
-    condition: '100% lỗi HTTP 500', action: 'So sánh có và không dự phòng', question: 'Người dùng nhìn thấy gì?' },
+    detail: 'So sánh giữa việc hiện trang lỗi thẳng (khi tắt Fallback) với việc trả dữ liệu dự phòng an toàn (khi bật Fallback) để ứng dụng không bị đơ.',
+    condition: 'Lỗi liên tiếp 100%', action: 'So sánh có và không dự phòng', question: 'Người dùng sẽ thấy gì trên màn hình?' },
 ];
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -125,9 +126,9 @@ export default function App() {
 
   async function readBreaker(baseUrl) {
     const status = await requireOk(baseUrl + resilience + '/status');
-    setBreaker(status.circuitBreaker_demo4.state);
-    if (status.circuitBreaker_converge) setConvergeBreaker(status.circuitBreaker_converge.state);
-    return status.circuitBreaker_demo4.state;
+    setBreaker(status?.circuitBreaker_demo4?.state ?? null);
+    if (status?.circuitBreaker_converge) setConvergeBreaker(status.circuitBreaker_converge.state);
+    return status?.circuitBreaker_demo4?.state ?? null;
   }
 
   async function perform(work, cleanup = true) {
@@ -193,7 +194,7 @@ export default function App() {
             break;
           }
           case 'bulkhead': {
-            setStage('Đang gửi 10 lượt song song KHÔNG có Bulkhead (chiếm trọn 10 worker threads trong 2s)…');
+            setStage('Đang gửi 10 lượt cùng lúc khi KHÔNG có Bulkhead (chiếm hết 10 luồng xử lý trong 2 giây)…');
             await requireOk(`${user}/api/chaos?delayMs=2000`, 'POST');
             const response = await callOrder(base, '/burst/no-protection?n=10');
             setResult(response);
@@ -203,7 +204,7 @@ export default function App() {
             await requireOk(`${user}/api/chaos?failPercent=100`, 'POST');
             const calls = [];
             for (let index = 1; index <= 6; index += 1) {
-              setStage(`Đang gửi lượt ${index}/6 (KHÔNG có Circuit Breaker, mù quáng đập vào User Service đang chết)…`);
+              setStage(`Đang gửi lượt ${index}/6 (không có cầu dao nên vẫn tiếp tục gửi sang User Service đang lỗi)…`);
               const res = await callOrder(base, '/no-protection/1');
               calls.push(res);
               setResult([...calls]);
@@ -231,10 +232,10 @@ export default function App() {
         }
         case 'timeout': {
           const phases = [
-            ['1/4: Gọi trực tiếp User Service (Không Timeout · Ngâm 4s)', 4000, () => request(user + '/api/users/1')],
-            ['2/4: Đo OpenFeign read timeout (Cắt sau 3.000ms)', 3000, () => callOrder(base, '/feign-timeout/1')],
-            ['3/4: Đo Spring 6 RestClient timeout (Cắt sau 2.500ms)', 2500, () => callOrder(base, '/restclient-timeout/1')],
-            ['4/4: Đo Resilience4j TimeLimiter (Cắt sau 1.500ms)', 1500, () => callOrder(base, '/timeout/1')],
+            ['1/4: Gọi trực tiếp (Không Timeout · Chờ hết 4s)', 4000, () => request(user + '/api/users/1')],
+            ['2/4: Lớp kết nối OpenFeign (Cấu hình mẫu: cắt ở 3s)', 3000, () => callOrder(base, '/feign-timeout/1')],
+            ['3/4: Lớp kết nối RestClient (Cấu hình mẫu: cắt ở 2.5s)', 2500, () => callOrder(base, '/restclient-timeout/1')],
+            ['4/4: Lớp nghiệp vụ TimeLimiter (Cấu hình mẫu: cắt ở 1.5s)', 1500, () => callOrder(base, '/timeout/1')],
           ];
           const responses = [];
           for (const [label, targetMs, call] of phases) {
@@ -252,15 +253,15 @@ export default function App() {
           break;
         }
         case 'retry': {
-          setStage('1/2: Đang đo Resilience4j Retry (tự thử lại với Exponential Backoff)…');
+          setStage('1/2: Đang chạy Resilience4j Retry (tự thử lại 3 lần)…');
           const r4jResponse = await callOrder(base, '/retry/1');
+          const item1 = { ...r4jResponse, library: 'Resilience4j Retry' };
+          setResult([item1]);
           await requireOk(`${user}/api/chaos?failFirstN=2`, 'POST');
-          setStage('2/2: Đang đo Spring Retry (Spring RetryTemplate với Exponential Backoff)…');
+          setStage('2/2: Đang chạy Spring Retry (RetryTemplate tự thử lại 3 lần)…');
           const springResponse = await callOrder(base, '/spring-retry/1');
-          setResult([
-            { ...r4jResponse, library: 'Resilience4j Retry' },
-            { ...springResponse, library: 'Spring Retry' }
-          ]);
+          const item2 = { ...springResponse, library: 'Spring Retry' };
+          setResult([item1, item2]);
           break;
         }
         case 'bulkhead': {
@@ -358,7 +359,7 @@ export default function App() {
       }
       if (state === 'OPEN') throw new Error('Mạch vẫn đang mở. Hãy thử lại sau vài giây.');
 
-      const calls = result ? result.slice(0, 6) : [];
+      const calls = Array.isArray(result) ? result.slice(0, 6) : [];
       setStage('Mạch đã chuyển HALF-OPEN! Đang gửi lượt thăm dò 1/2…');
       const probe1 = await callOrder(target, '/circuit-breaker/1');
       calls.push(probe1);
@@ -499,12 +500,12 @@ export default function App() {
                 <div className="unprotected-banner">
                   <AlertTriangle size={18} className="unprotected-banner-icon" />
                   <div>
-                    <strong>ĐANG Ở CHẾ ĐỘ: KHÔNG CÓ CƠ CHẾ BẢO VỆ (DISASTER BASELINE)</strong>
+                    <strong>ĐANG Ở CHẾ ĐỘ: KHÔNG CÓ CƠ CHẾ BẢO VỆ (Xem sự cố thực tế)</strong>
                     <p>
-                      {scenario.id === 'timeout' && 'Không cấu hình Feign readTimeout (3s) và không dùng Resilience4j TimeLimiter (1.5s). Khi downstream nghẽn 4s, worker thread bị giam giữ, cạn kiệt Connection Pool và làm sập dây chuyền.'}
-                      {scenario.id === 'retry' && 'Không có Spring Retry hay Resilience4j Retry. Khi downstream trả lỗi 500 thoáng qua ở lần 1, Order Service đầu hàng ngay lập tức và ném lỗi 500 về Client làm sập giao dịch.'}
-                      {scenario.id === 'bulkhead' && 'Không có Resilience4j Bulkhead Semaphore. Toàn bộ 10 request song song ập vào chiếm trọn 10/10 worker threads của Order Service trong 2 giây, làm tê liệt các nghiệp vụ khác.'}
-                      {scenario.id === 'breaker' && 'Không có Resilience4j Circuit Breaker. Downstream chết 100% nhưng Order Service vẫn mù quáng gửi cả 6 request qua mạng, không có Fail-Fast (14ms), tiếp tục dội bom đối tác.'}
+                      {scenario.id === 'timeout' && 'Không bật Timeout. Khi User Service chậm 4 giây, luồng xử lý bên Order Service phải đứng chờ đủ 4 giây. Nếu nhiều người bấm cùng lúc, máy chủ sẽ hết luồng và đơ cứng.'}
+                      {scenario.id === 'retry' && 'Không bật Retry. Khi User Service bị lỗi tạm thời (500) ngay lần đầu, đơn hàng lập tức bị hủy và báo lỗi về màn hình thay vì tự thử lại.'}
+                      {scenario.id === 'bulkhead' && 'Không bật Bulkhead giới hạn luồng. Cả 10 người bấm cùng lúc đều được đẩy vào xử lý, chiếm trọn 10/10 luồng trong 2 giây khiến các chức năng khác đứng hình theo.'}
+                      {scenario.id === 'breaker' && 'Không bật Circuit Breaker (cầu dao ngắt). User Service đã hỏng 100% nhưng Order Service vẫn cố gửi cả 6 cuộc gọi qua mạng, vừa tốn thời gian chờ vừa dội tải thêm.'}
                     </p>
                   </div>
                 </div>
@@ -520,10 +521,10 @@ export default function App() {
                     {scenarioMode === 'unprotected' ? (
                       <>
                         <AlertTriangle size={17} />
-                        {scenario.id === 'timeout' && '⚠️ Chạy KHÔNG có Timeout (Xem ngâm treo luồng 4s)'}
-                        {scenario.id === 'retry' && '⚠️ Gọi KHÔNG có Retry (Xem sập ngay lần 1)'}
-                        {scenario.id === 'bulkhead' && '⚠️ Gửi 10 lượt KHÔNG có Bulkhead (Xem cạn kiệt 10 luồng)'}
-                        {scenario.id === 'breaker' && '⚠️ Gửi 6 lượt KHÔNG có Circuit Breaker (Mù quáng 6/6 lỗi)'}
+                        {scenario.id === 'timeout' && '⚠️ Chạy KHÔNG có Timeout (Đứng chờ 4s)'}
+                        {scenario.id === 'retry' && '⚠️ Gọi KHÔNG có Retry (Báo lỗi ngay lần 1)'}
+                        {scenario.id === 'bulkhead' && '⚠️ Gửi 10 lượt KHÔNG có Bulkhead (Chiếm hết luồng)'}
+                        {scenario.id === 'breaker' && '⚠️ Gửi 6 lượt KHÔNG có Circuit Breaker (Gửi mù 6/6 lần)'}
                       </>
                     ) : (
                       <>
@@ -541,7 +542,7 @@ export default function App() {
               {busy && <div className="live-stage" role="status"><LoaderCircle className="spinner" size={15} aria-hidden="true" />{stage}</div>}
               {needsRecovery && !busy && !error && (
                 <div className="probe-reason-box">
-                  <strong>💡 Tại sao cần đúng 2 lượt thăm dò?</strong> Theo chuẩn cấu hình Resilience4j (<code>permittedNumberOfCallsInHalfOpenState = 2</code>), khi mạch chuyển sang HALF-OPEN cần tối thiểu <strong>2 lượt thành công liên tiếp</strong> để chắc chắn đối tác đã phục hồi thật sự, loại trừ yếu tố may mắn ngẫu nhiên trước khi chính thức khép mạch về CLOSED.
+                  <strong>💡 Tại sao cần đúng 2 lượt thăm dò?</strong> Khi cầu dao sang chế độ dò đường (HALF-OPEN), hệ thống quy định (<code>permittedNumberOfCallsInHalfOpenState = 2</code>) phải có <strong>2 lần thử liên tiếp thành công</strong> mới chắc chắn User Service đã khỏe hẳn — tránh trường hợp lần 1 thành công do ăn may rồi vừa mở lại đã sập tiếp.
                 </div>
               )}
               {services && !ready && <p className="notice">Khởi động Order Service và User Service để chạy demo.</p>}
@@ -579,31 +580,35 @@ export default function App() {
 
               <div className={`demo-dashboard layout-${dashboardLayout}`}>
                 <div className="dashboard-visualizer">
-                  <FlowVisualizer
-                    scenarioId={scenario.id}
-                    busy={busy}
-                    liveStage={stage}
-                    breakerState={scenario.id === 'converge' ? convergeBreaker : breaker}
-                    runCount={runCount}
-                    probeRunCount={probeRunCount}
-                    actionLabel={scenarioMode === 'unprotected' ? 'Chạy không bảo vệ' : scenario.action}
-                    scenarioMode={scenarioMode}
-                    isUnprotected={scenarioMode === 'unprotected'}
-                  />
+                  <ErrorBoundary resetKey={`${scenario.id}:${scenarioMode}:${runCount}:${probeRunCount}`} onReset={() => setResult(null)}>
+                    <FlowVisualizer
+                      scenarioId={scenario.id}
+                      busy={busy}
+                      liveStage={stage}
+                      breakerState={scenario.id === 'converge' ? convergeBreaker : breaker}
+                      runCount={runCount}
+                      probeRunCount={probeRunCount}
+                      actionLabel={scenarioMode === 'unprotected' ? 'Chạy không bảo vệ' : scenario.action}
+                      scenarioMode={scenarioMode}
+                      isUnprotected={scenarioMode === 'unprotected'}
+                    />
+                  </ErrorBoundary>
                 </div>
                 <div className="dashboard-results">
                   {clock && <TimeoutClock key={clock.start} clock={clock} />}
                   <div aria-live="polite" aria-busy={busy}>
-                    <DemoResults
-                      scenario={scenario.id}
-                      result={result}
-                      breaker={scenario.id === 'converge' ? convergeBreaker : breaker}
-                      busy={busy}
-                      error={error}
-                      view={resultView}
-                      onViewChange={setResultView}
-                      scenarioMode={scenarioMode}
-                    />
+                    <ErrorBoundary resetKey={`${scenario.id}:${scenarioMode}:${runCount}:${probeRunCount}`} onReset={() => setResult(null)}>
+                      <DemoResults
+                        scenario={scenario.id}
+                        result={result}
+                        breaker={scenario.id === 'converge' ? convergeBreaker : breaker}
+                        busy={busy}
+                        error={error}
+                        view={resultView}
+                        onViewChange={setResultView}
+                        scenarioMode={scenarioMode}
+                      />
+                    </ErrorBoundary>
                   </div>
                 </div>
               </div>

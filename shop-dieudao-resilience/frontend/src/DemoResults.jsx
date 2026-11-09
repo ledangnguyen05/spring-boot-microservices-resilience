@@ -6,28 +6,28 @@ const number = new Intl.NumberFormat('vi-VN');
 const milliseconds = (value) => value == null ? '—' : `${number.format(value)} ms`;
 const outcomeLabels = {
   OK: 'Thành công',
-  TIMEOUT: 'TimeLimiter hết giờ (1.5s)',
-  FEIGN_TIMEOUT: 'Feign hết giờ (3s)',
-  RESTCLIENT_TIMEOUT: 'RestClient hết giờ (2.5s)',
-  UPSTREAM_DOWN: 'User Service mất kết nối (Offline)',
-  UPSTREAM_5XX: 'User Service trả lỗi 5xx',
+  TIMEOUT: 'Hết giờ ở tầng ứng dụng (TimeLimiter)',
+  FEIGN_TIMEOUT: 'Hết giờ ở tầng mạng Feign',
+  RESTCLIENT_TIMEOUT: 'Hết giờ ở tầng mạng RestClient',
+  UPSTREAM_DOWN: 'User Service mất kết nối (Tắt server)',
+  UPSTREAM_5XX: 'User Service báo lỗi 5xx',
   UPSTREAM_4XX: 'User Service từ chối yêu cầu 4xx',
-  BULKHEAD_FULL: 'Hết suất xử lý (429)',
-  CIRCUIT_OPEN: 'Mạch đang mở (Fail-fast)',
-  FALLBACK: 'Dùng dữ liệu dự phòng',
+  BULKHEAD_FULL: 'Hết chỗ xử lý (Quá tải)',
+  CIRCUIT_OPEN: 'Cầu dao đang ngắt (Chặn luôn)',
+  FALLBACK: 'Dùng dữ liệu tạm thay thế (Fallback)',
 };
 const runLabels = {
   timeout: [
-    '1. Gọi trực tiếp User Service (Ngâm 4s · Không có Timeout)',
-    '2. OpenFeign readTimeout (Cắt sau 3.000ms · HTTP 504)',
-    '3. Spring RestClient timeout (Cắt sau 2.500ms · HTTP 504)',
-    '4. Resilience4j TimeLimiter (Cắt sau 1.500ms · HTTP 504)'
+    '1. Không cài Timeout (Gọi thẳng · Chờ tới khi xong 4s)',
+    '2. Tầng kết nối Feign (Ví dụ đặt hạn 3s · Hết giờ cắt)',
+    '3. Tầng kết nối RestClient (Ví dụ đặt hạn 2.5s · Hết giờ cắt)',
+    '4. Tầng nghiệp vụ TimeLimiter (Ví dụ đặt hạn 1.5s · Hết giờ cắt)'
   ],
   retry: [
-    '1. Resilience4j Retry (Backoff 500ms ➔ 1000ms · Thành công ở lần 3)',
-    '2. Spring Retry - RetryTemplate (Backoff 500ms ➔ 1000ms · Thành công ở lần 3)'
+    '1. Thư viện Resilience4j Retry (Nghỉ 500ms ➔ 1000ms · Lần 3 thành công)',
+    '2. Thư viện Spring Retry (Nghỉ 500ms ➔ 1000ms · Lần 3 thành công)'
   ],
-  fallback: ['Tắt dự phòng (Không Fallback · Lỗi 500)', 'Bật dự phòng (Có Fallback · 200 OK)'],
+  fallback: ['Khi TẮT dữ liệu dự phòng (Trả thẳng lỗi 500)', 'Khi BẬT dữ liệu dự phòng (Trả dữ liệu tạm HTTP 200)'],
 };
 
 export function TimeoutClock({ clock }) {
@@ -41,19 +41,19 @@ export function TimeoutClock({ clock }) {
 
   return <div className="demo-clock">
     <Clock3 size={22} aria-hidden="true" />
-    <div className="clock-label"><strong>{clock.label}</strong><small>Mốc dự kiến {(clock.targetMs / 1000).toLocaleString('vi-VN')} giây</small></div>
+    <div className="clock-label"><strong>{clock.label}</strong><small>Hạn mức đã đặt: {(clock.targetMs / 1000).toLocaleString('vi-VN')} giây</small></div>
     <strong className="clock-time" role="timer">{(elapsed / 1000).toLocaleString('vi-VN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} s</strong>
-    <progress aria-label="Thời gian đã chờ so với mốc dự kiến" max={clock.targetMs} value={Math.min(elapsed, clock.targetMs)} />
+    <progress aria-label="Thời gian đã chờ so với hạn mức" max={clock.targetMs} value={Math.min(elapsed, clock.targetMs)} />
   </div>;
 }
 
-function CallDetails({ rows, retry }) {
-  const title = retry ? 'Phản hồi từng lần gọi User Service' : 'Kết quả từng lượt song song';
+function CallDetails({ rows, retry, customTitle }) {
+  const title = customTitle || (retry ? 'Chi tiết từng lần gọi sang User Service' : 'Kết quả từng lượt chạy song song');
   return <div className="table-frame call-details" tabIndex={0} role="region" aria-label={title}>
     <table className="result-table">
       <caption>{title} · {rows.length} lượt</caption>
       <thead><tr>
-        <th scope="col">Lượt</th><th scope="col">{retry ? 'HTTP từ User' : 'Mã HTTP từng lượt'}</th>
+        <th scope="col">Lượt</th><th scope="col">{retry ? 'Mã HTTP nhận về' : 'Mã HTTP từng lượt'}</th>
         <th scope="col">Kết quả</th><th scope="col">Thời gian</th>
         {!retry && <th scope="col">Số lần gọi User</th>}
       </tr></thead>
@@ -70,19 +70,21 @@ function CallDetails({ rows, retry }) {
 }
 
 function ConvergeTable({ result }) {
+  const list = Array.isArray(result) ? result : [];
   return <div className="table-frame" tabIndex={0} role="region" aria-label="Bảng kịch bản hội tụ 4 topic">
     <table className="result-table">
-      <caption>Kịch bản hội tụ · {result.length}/5 pha (Trọn vẹn vòng đời: Tự bảo vệ & Tự chữa lành)</caption>
+      <caption>Kịch bản hội tụ · {list.length}/5 pha (Từ lúc bình thường ➔ gặp lỗi ➔ tự phục hồi)</caption>
       <thead><tr>
-        <th scope="col">Pha</th><th scope="col">Cơ chế ra tay</th><th scope="col">HTTP</th>
-        <th scope="col">Kết quả & Bản chất kỹ thuật</th><th scope="col">Thời gian</th><th scope="col">Số lần gọi User</th>
+        <th scope="col">Pha</th><th scope="col">Cơ chế tham gia</th><th scope="col">HTTP</th>
+        <th scope="col">Kết quả & Ý nghĩa</th><th scope="col">Thời gian</th><th scope="col">Số lần gọi User</th>
       </tr></thead>
-      <tbody>{result.map(({ body, status, measuredMs, phase }, index) => {
+      <tbody>{list.map((item, index) => {
+        const { body = {}, status, measuredMs, phase = {} } = item || {};
         const burst = body?.summary;
         const outcome = burst
           ? Object.entries(burst).map(([key, count]) => `${count}× ${outcomeLabels[key] ?? key}`).join(' · ')
           : (outcomeLabels[body?.outcome] ?? body?.outcome);
-        const calls = burst ? (body.requestResults ?? []).reduce((sum, item) => sum + (item.attempts ?? 0), 0) : body?.attempts;
+        const calls = burst ? (body?.requestResults ?? []).reduce((sum, req) => sum + (req?.attempts ?? 0), 0) : body?.attempts;
         const isOk = status === 200;
         const isFailFast = status === 503 && body?.attempts === 0;
         return <tr key={index}>
@@ -101,11 +103,11 @@ function ConvergeTable({ result }) {
           <td>
             <strong>{outcome}</strong>
             <small style={{ display: 'block', color: '#555273', marginTop: '2px', lineHeight: 1.4 }}>
-              {index === 0 && '✔ Thành công lọc bão tải: cấp đúng 3 suất, 3 lượt quá tải chặn ngay để tránh nghẽn thread pool.'}
-              {index === 1 && '✔ Thành công tự cứu: 2 lần đầu lỗi 500, Retry kiên trì gọi lần 3 cứu vãn giao dịch trong suốt.'}
-              {index === 2 && '⚠ Timeout cắt trễ: User Service treo 3s, Feign ngắt sau 1s (504), CB đếm đủ lỗi bung sang OPEN.'}
-              {index === 3 && '🛡️ Bảo vệ sinh tồn (Fail-fast): 503 trong 14ms (0 lần gọi User) để cứu Order Service, Retry dừng chống Retry Storm!'}
-              {index === 4 && '✔ Tự chữa lành (Self-Healing): User Service hồi phục, thăm dò thành công 200 OK, mạch khép về CLOSED!'}
+              {index === 0 && '✔ Lọc bớt người vào: nhận đúng 3 lượt, 3 lượt thừa báo bận (429) ngay.'}
+              {index === 1 && '✔ Tự thử lại: 2 lần đầu lỗi 500, lần 3 thành công 200 OK.'}
+              {index === 2 && '⚠ Cắt treo & Bung cầu dao: User Service treo 3s, Timeout cắt sau 1s, cầu dao chuyển OPEN.'}
+              {index === 3 && '🛡️ Chặn nhanh (Fail-fast): trả 503 ngay sau vài ms (0 lần gọi User), Retry cũng tự dừng.'}
+              {index === 4 && '✔ Tự mở thông mạch lại: User Service khỏe lại, thăm dò 200 OK thành công, đóng cầu dao về CLOSED.'}
             </small>
           </td>
           <td className="numeric">{milliseconds(measuredMs)}</td>
@@ -120,7 +122,7 @@ function ResultTable({ scenario, result }) {
   if (scenario === 'converge') return <ConvergeTable result={result} />;
 
   if (scenario === 'normal') {
-    const { body, status } = result;
+    const { body = {}, status } = result || {};
     const rows = [
       ['Mã HTTP', <span className={`http-code ${status === 200 ? 'http-ok' : 'http-error'}`}>{status}</span>],
       ...(status === 200 ? [
@@ -143,13 +145,13 @@ function ResultTable({ scenario, result }) {
   }
 
   if (scenario === 'bulkhead') {
-    const { body, status, _stagedResults } = result;
+    const { body = {}, status, _stagedResults } = result || {};
     const displayResults = _stagedResults || body.requestResults || [];
     return <><div className="table-frame" tabIndex={0} role="region" aria-label="Bảng tổng hợp Bulkhead">
       <table className="result-table">
-        <caption>{body.parallelRequests} lượt song song · HTTP {status} cho API tổng hợp · {milliseconds(body.totalMs)}</caption>
+        <caption>{body.parallelRequests ?? 0} lượt gửi cùng lúc · HTTP {status} · {milliseconds(body.totalMs)}</caption>
         <thead><tr><th scope="col">Kết quả từng lượt</th><th scope="col">Mã kết quả</th><th scope="col">Số lượt</th></tr></thead>
-        <tbody>{Object.entries(body.summary).map(([outcome, count]) => (
+        <tbody>{Object.entries(body.summary || {}).map(([outcome, count]) => (
           <tr key={outcome}><th scope="row">{outcomeLabels[outcome] ?? outcome}</th><td><code>{outcome}</code></td><td className="numeric">{count}</td></tr>
         ))}</tbody>
       </table>
@@ -162,8 +164,8 @@ function ResultTable({ scenario, result }) {
 
   const responses = Array.isArray(result) ? result : [result];
   const showCustomer = scenario === 'retry' || scenario === 'fallback';
-  const stagedAttempts = result._stagedAttempts || (Array.isArray(result) ? result[0]?.body?.attemptResults : result.body?.attemptResults);
-  const showSummaryRow = result._stagedSummary !== false;
+  const stagedAttempts = result?._stagedAttempts || (Array.isArray(result) ? result[0]?.body?.attemptResults : result?.body?.attemptResults);
+  const showSummaryRow = result?._stagedSummary !== false;
 
   return <><div className="table-frame" tabIndex={0} role="region" aria-label="Bảng phản hồi API">
     <table className="result-table">
@@ -174,14 +176,15 @@ function ResultTable({ scenario, result }) {
       </tr></thead>
       <tbody>
         {showSummaryRow ? (
-          responses.map(({ body, status, measuredMs }, index) => {
+          responses.map((item, index) => {
+            const { body = {}, status, measuredMs } = item || {};
             let rowLabel = runLabels[scenario]?.[index];
             if (!rowLabel) {
               if (scenario === 'breaker') {
-                if (index < 5) rowLabel = `Lượt ${index + 1}/6 (Mạch CLOSED)`;
-                else if (index === 5) rowLabel = `Lượt 6/6 (Mạch OPEN · Fail-Fast 14ms)`;
-                else if (index === 6) rowLabel = `Thăm dò 1/2 (Mạch HALF-OPEN)`;
-                else if (index === 7) rowLabel = `Thăm dò 2/2 (Khép mạch CLOSED 🟢)`;
+                if (index < 5) rowLabel = `Lượt ${index + 1}/6 (Mạch đang đóng CLOSED)`;
+                else if (index === 5) rowLabel = `Lượt 6/6 (Cầu dao NGẮT · Trả lỗi ngay trong ${measuredMs ?? 14}ms)`;
+                else if (index === 6) rowLabel = `Thăm dò 1/2 (Mạch đang mở hé HALF-OPEN)`;
+                else if (index === 7) rowLabel = `Thăm dò 2/2 (Đủ 2 lượt tốt ➔ Đóng mạch lại CLOSED 🟢)`;
                 else rowLabel = `Thăm dò ${index - 5}`;
               } else {
                 rowLabel = `Lượt ${index + 1}`;
@@ -193,17 +196,17 @@ function ResultTable({ scenario, result }) {
                   {rowLabel}
                   {scenario === 'breaker' && index === 5 && (
                     <small style={{ display: 'block', color: '#ef4444', fontWeight: 600, marginTop: '2px' }}>
-                      ⚡ 0 lần gọi User · Chặn trong 14ms
+                      ⚡ 0 lần gọi User · Chặn ngay tại cửa không cần gọi qua mạng
                     </small>
                   )}
                   {scenario === 'breaker' && index === 6 && (
                     <small style={{ display: 'block', color: '#f59e0b', fontWeight: 600, marginTop: '2px' }}>
-                      🟡 Lượt 1 OK · Chờ lượt 2 xác nhận
+                      🟡 Lượt thử 1 đã qua · Chờ lượt thử 2 xác nhận
                     </small>
                   )}
                   {scenario === 'breaker' && index === 7 && (
                     <small style={{ display: 'block', color: '#16a34a', fontWeight: 600, marginTop: '2px' }}>
-                      🟢 Đủ 2/2 lượt an toàn ➔ Mạch đóng hoàn toàn
+                      🟢 Cả 2 lượt thử đều ổn ➔ Mở đường hoạt động bình thường trở lại
                     </small>
                   )}
                 </th>
@@ -211,7 +214,7 @@ function ResultTable({ scenario, result }) {
                 <td>{outcomeLabels[body?.outcome] ?? body?.outcome ?? (status === 200 ? 'Đã nhận dữ liệu' : 'Yêu cầu thất bại')}</td>
                 <td className="numeric">{milliseconds(measuredMs ?? body?.elapsedMs)}</td>
                 <td className="numeric">{body?.attempts ?? '—'}</td>
-                {showCustomer && <td>{body.user?.name ?? '—'}{body.user?.address && <small>{body.user.address}</small>}</td>}
+                {showCustomer && <td>{body?.user?.name ?? '—'}{body?.user?.address && <small>{body.user.address}</small>}</td>}
               </tr>
             );
           })
@@ -219,7 +222,7 @@ function ResultTable({ scenario, result }) {
           <tr>
             <th scope="row">Tra cứu khách hàng</th>
             <td><span className="http-code http-warn">Đang thử lại…</span></td>
-            <td>Đang tự thử lại qua Resilience4j Retry…</td>
+            <td>Đang tự động thử lại qua Resilience4j Retry…</td>
             <td className="numeric">Đang đo…</td>
             <td className="numeric">{stagedAttempts?.length ?? 1} / 3</td>
             {showCustomer && <td>Đang chờ phản hồi…</td>}
@@ -228,138 +231,169 @@ function ResultTable({ scenario, result }) {
       </tbody>
     </table>
   </div>
-    {scenario === 'retry' && (stagedAttempts?.length
-      ? <CallDetails rows={stagedAttempts} retry />
-      : <p className="note">Cần khởi động lại Order Service với bản mới để xem từng lần thử.</p>)}
+    {scenario === 'retry' && (
+      Array.isArray(result) ? (
+        result.map((item, idx) => (
+          item?.body?.attemptResults?.length ? (
+            <CallDetails
+              key={idx}
+              rows={item.body.attemptResults}
+              retry
+              customTitle={idx === 0
+                ? 'Chi tiết 3 lần gọi · Thư viện 1: Resilience4j Retry'
+                : 'Chi tiết 3 lần gọi · Thư viện 2: Spring Retry (RetryTemplate)'}
+            />
+          ) : null
+        ))
+      ) : (
+        stagedAttempts?.length
+          ? <CallDetails rows={stagedAttempts} retry />
+          : <p className="note">Cần khởi động lại Order Service với bản mới để xem từng lần thử.</p>
+      )
+    )}
   </>;
 }
 
 function summarize(scenario, result, breaker) {
+  if (!result) return '';
   if (scenario === 'normal') {
-    const { body, status } = result;
+    const { body = {}, status } = result;
     if (status !== 200) return `API đơn hàng trả HTTP ${status}. Chưa lấy được dữ liệu đơn hàng.`;
-    if (!body.user) return 'API trả HTTP 200 và có thông tin đơn hàng, nhưng phản hồi thiếu dữ liệu khách hàng.';
-    return `API trả HTTP 200 với đơn #${body.orderId} và thông tin của ${body.user.name}. Thời gian tra cứu khách là ${milliseconds(body.timeTakenMs)}.`;
+    if (!body?.user) return 'API trả HTTP 200 và có thông tin đơn hàng, nhưng phản hồi thiếu dữ liệu khách hàng.';
+    return `Hệ thống hoạt động bình thường: lấy được đơn #${body.orderId} kèm thông tin khách ${body.user.name} trong ${milliseconds(body.timeTakenMs)}.`;
   }
 
   if (scenario === 'timeout') {
-    if (!Array.isArray(result) || result.length < 3) return 'Cần đủ các lượt đo để so sánh thời gian chờ.';
-    const direct = result[0];
-    const feignRun = result[1];
-    const restClientRun = result.length >= 4 ? result[2] : null;
-    const limiterRun = result[result.length - 1];
-    return `Gọi trực tiếp không timeout ngâm chờ ${milliseconds(direct.measuredMs)}. Khi có cơ chế bảo vệ: Feign cắt sau ${milliseconds(feignRun?.measuredMs ?? 3000)}, RestClient cắt sau ${milliseconds(restClientRun?.measuredMs ?? 2500)}, và TimeLimiter cắt sau ${milliseconds(limiterRun?.measuredMs ?? 1500)} (đều trả HTTP 504), giúp giải phóng luồng xử lý và chống treo hệ thống.`;
+    if (!Array.isArray(result) || result.length < 4) return 'Đang đo tuần tự cả 4 kịch bản để hiển thị đầy đủ trên bảng…';
+    const [direct, feignRun, restClientRun, limiterRun] = result;
+    return `Khi không cài Timeout, yêu cầu phải chờ suốt ${milliseconds(direct?.measuredMs ?? 4000)}. Khi cài Timeout: các con số ${milliseconds(feignRun?.measuredMs ?? 3000)} (Feign), ${milliseconds(restClientRun?.measuredMs ?? 2500)} (RestClient) và ${milliseconds(limiterRun?.measuredMs ?? 1500)} (TimeLimiter) là các mốc do chúng ta chủ động cấu hình để minh họa 2 lớp khác nhau: lớp kết nối mạng (Feign/RestClient) cắt một cuộc gọi HTTP bị kẹt, còn lớp ứng dụng (TimeLimiter) khống chế tổng thời gian chờ tối đa cho cả tính năng.`;
   }
 
   if (scenario === 'retry') {
     const list = Array.isArray(result) ? result : [result];
     const first = list[0]?.body ?? {};
     if (list.length > 1) {
-      return `Cả 2 thư viện Resilience4j Retry và Spring Retry đều tự động thử lại 3 lần thành công (2 lần đầu HTTP 500, lần 3 phục hồi HTTP 200 OK) với thuật toán Exponential Backoff (500ms ➔ 1000ms), cứu vãn giao dịch khách hàng trong suốt.`;
+      return `Cả 2 thư viện Resilience4j Retry và Spring Retry đều hoạt động giống nhau: tự động thử lại khi gặp lỗi 500 ở 2 lần đầu, giữ khoảng nghỉ (500ms rồi 1000ms) và lấy được dữ liệu thành công (HTTP 200) ở lần thứ 3.`;
     }
-    if (first.outcome === 'OK' && first.attempts === 1) return 'Lần gọi đầu đã thành công, nên Order Service không cần thử lại.';
-    if (first.outcome === 'OK') return `Order Service tự thử lại và lấy được thông tin khách hàng ở lần gọi thứ ${first.attempts}.`;
-    return `Order Service đã gọi User Service ${first.attempts} lần. Kết quả cuối là ${outcomeLabels[first.outcome] ?? first.outcome}.`;
+    if (first.outcome === 'OK' && first.attempts === 1) return 'Lần gọi đầu đã thành công ngay, nên không cần thử lại.';
+    if (first.outcome === 'OK') return `Hệ thống tự thử lại và lấy thành công thông tin khách ở lần thứ ${first.attempts} (khách hàng không bị báo lỗi).`;
+    return `Order Service đã thử gọi ${first.attempts ?? 1} lần nhưng kết quả cuối là ${outcomeLabels[first.outcome] ?? first.outcome}.`;
   }
 
   if (scenario === 'bulkhead') {
-    const { parallelRequests, summary } = result.body;
+    const { parallelRequests = 0, summary = {} } = result?.body || {};
     const succeeded = summary.OK ?? 0;
     const rejected = summary.BULKHEAD_FULL ?? 0;
     const other = parallelRequests - succeeded - rejected;
-    return `Trong ${parallelRequests} lượt đồng thời, ${succeeded} lượt thành công và ${rejected} lượt bị từ chối vì hết suất.${other > 0 ? ` Có ${other} lượt trả kết quả khác.` : ''}${rejected > 0 ? ' Các lượt hết suất bị chặn trước khi gọi User Service.' : ''}`;
+    return `Trong ${parallelRequests} khách cùng gửi yêu cầu một lúc: hệ thống chỉ cho tối đa ${succeeded} người làm trước để giữ ổn định, còn ${rejected} người đến sau được báo bận (HTTP 429) ngay lập tức thay vì làm đơ toàn bộ máy chủ.${other > 0 ? ` Có ${other} lượt trả kết quả khác.` : ''}`;
   }
 
   if (scenario === 'breaker') {
-    const blocked = result.filter(({ body }) => body.outcome === 'CIRCUIT_OPEN' && body.attempts === 0).length;
-    const probes = result.slice(6);
-    if (probes.length === 2 && probes.every(({ body }) => body.outcome === 'OK') && breaker === 'CLOSED') {
-      return 'Hai lượt thăm dò đều thành công. Mạch đã đóng và cho phép các lượt tiếp theo đi qua.';
+    const list = Array.isArray(result) ? result : (result ? [result] : []);
+    const blocked = list.filter((item) => item?.body?.outcome === 'CIRCUIT_OPEN' && item?.body?.attempts === 0).length;
+    const probes = list.slice(6);
+    if (probes.length === 2 && probes.every((item) => item?.body?.outcome === 'OK') && breaker === 'CLOSED') {
+      return 'Cả 2 lượt thử thăm dò đều thành công! Cầu dao đã đóng lại như bình thường và cho các lượt mới đi qua.';
     }
     if (probes.length === 2) {
-      const successful = probes.filter(({ body }) => body.outcome === 'OK').length;
+      const successful = probes.filter((item) => item?.body?.outcome === 'OK').length;
       return `Có ${successful}/2 lượt thăm dò thành công.${breaker ? ` Trạng thái hiện tại là ${breaker}.` : ''}`;
     }
-    const summary = blocked > 0
-      ? `Circuit Breaker đã chặn ${blocked} lượt tại Order Service. Những lượt này không gọi sang User Service.`
+    const summaryText = blocked > 0
+      ? `Sau 5 lần lỗi liên tiếp, cầu dao đã ngắt (OPEN) và chặn đứng ngay lập tức ${blocked} lượt gọi tiếp theo tại Order Service mà không gửi tốn công sang User Service.`
       : 'Chưa ghi nhận lượt nào bị Circuit Breaker chặn.';
-    return breaker ? `${summary} Trạng thái hiện tại là ${breaker}.` : summary;
+    return breaker ? `${summaryText} Trạng thái hiện tại: ${breaker}.` : summaryText;
   }
 
   if (scenario === 'converge') {
-    if (result.length < 4) return 'Kịch bản đang chạy. Cần hoàn tất các pha để kết luận.';
-    const [bulk, retry, hang, open, heal] = result;
-    const counts = bulk.body.summary ?? {};
-    let text = `Quy trình 1 flow hoàn chỉnh: Pha 1 Bulkhead lọc tải (${counts.OK ?? 0} thành công / ${counts.BULKHEAD_FULL ?? 0} chặn 429). Pha 2 Retry tự cứu ở lần ${retry.body.attempts} (200 OK). Pha 3 Feign timeout cắt sau 1s kích hoạt bung cầu dao. Pha 4 từ chối ngay trong ${open.measuredMs}ms (503 Fail-fast, 0 lần gọi User) để cứu sống Order Service và chặn Retry Storm.`;
+    const list = Array.isArray(result) ? result : [];
+    if (list.length < 4) return 'Kịch bản đang chạy qua từng bước. Vui lòng chờ hoàn tất…';
+    const [bulk, retry, hang, open, heal] = list;
+    const counts = bulk?.body?.summary ?? {};
+    let text = `Trọn vẹn 5 bước kết hợp: (1) Bulkhead giữ nhịp chỉ nhận ${counts.OK ?? 0} và chặn bớt ${counts.BULKHEAD_FULL ?? 0} lượt thừa; (2) Retry tự thử lại 3 lần cứu lỗi chập chờn; (3) Timeout ngắt cuộc gọi bị treo và cầu dao tự bung OPEN; (4) Chặn ngay các lượt sau trong ${open?.measuredMs ?? 14}ms để bảo vệ máy chủ.`;
     if (heal) {
-      text += ` Pha 5: User Service được khôi phục, lượt thăm dò thành công 200 OK và Circuit Breaker đã tự động khép lại CLOSED!`;
+      text += ` (5) Khi User Service khỏe lại, hệ thống tự thăm dò và phục hồi bình thường (HTTP 200 OK).`;
     }
     return text;
   }
 
-  const [off, on] = result;
-  if (!on) return 'Đã nhận phản hồi khi tắt dự phòng. Cần thêm kết quả khi bật để so sánh.';
-  if (off.status >= 400 && on.body.outcome === 'FALLBACK' && on.body.user) {
-    return `Khi tắt dự phòng, yêu cầu trả HTTP ${off.status}. Khi bật, giao diện có thể hiển thị “${on.body.user.name}” từ dữ liệu dự phòng.`;
+  const list = Array.isArray(result) ? result : [result];
+  const [off, on] = list;
+  if (!on) return 'Đã có kết quả khi TẮT dự phòng. Đang chạy tiếp trường hợp BẬT dự phòng…';
+  if (off?.status >= 400 && on?.body?.outcome === 'FALLBACK' && on?.body?.user) {
+    return `Khi TẮT dữ liệu dự phòng, người dùng nhận trang báo lỗi HTTP ${off.status}. Khi BẬT dự phòng, app vẫn trả về thông tin tạm “${on.body.user.name}” để màn hình không bị lỗi trắng.`;
   }
-  return `Khi tắt dự phòng, API trả ${off.body.outcome}. Khi bật, API trả ${on.body.outcome}.`;
+  return `Khi tắt dự phòng: ${off?.body?.outcome}. Khi bật dự phòng: ${on?.body?.outcome}.`;
 }
 
 function describeProcess(scenario, result, breaker) {
+  if (!result) return [];
   switch (scenario) {
     case 'normal':
-      if (result.status !== 200 || !result.body.user) return [];
+      if (result?.status !== 200 || !result?.body?.user) return [];
       return [
-        'Order Service đọc đơn hàng từ cơ sở dữ liệu H2.',
-        'Order Service dùng mã khách trên đơn để gọi User Service qua OpenFeign.',
-        'Order Service ghép thông tin khách hàng với thông tin đơn rồi trả về cho giao diện.',
+        'Order Service lấy thông tin đơn hàng từ cơ sở dữ liệu.',
+        'Order Service gọi sang User Service để lấy tên và địa chỉ của khách hàng.',
+        'Order Service ghép dữ liệu đơn hàng + khách hàng và trả về cho màn hình.',
       ];
-    case 'timeout':
-      if (result[1]?.body.outcome !== 'FEIGN_TIMEOUT' || result[2]?.body.outcome !== 'TIMEOUT') return [];
+    case 'timeout': {
+      const list = Array.isArray(result) ? result : [];
+      if (list.length < 2) return [];
       return [
-        'User Service nhận yêu cầu nhưng được cấu hình chờ 4 giây trước khi phản hồi.',
-        'Đồng hồ đo từ lúc trình duyệt gửi từng lượt đến khi nhận phản hồi. Lượt gọi trực tiếp cho thấy độ trễ thật của User Service.',
-        'Qua Order Service, Feign hết giới hạn đọc trước khi User Service phản hồi. Ở lượt dùng TimeLimiter, giới hạn chờ ngắn hơn nên HTTP 504 về sớm hơn.',
+        'Thí nghiệm cố tình làm cho User Service xử lý chậm 4 giây mới trả lời.',
+        'Ở tầng mạng (Feign 3s / RestClient 2.5s): Đây là giới hạn ta đặt cho MỘT lần gửi HTTP qua mạng. Nếu mạng hoặc đối tác kẹt lâu hơn ngưỡng này, kết nối sẽ tự ngắt.',
+        'Ở tầng ứng dụng (TimeLimiter 1.5s): Đây là tổng thời gian tối đa ta cho phép cả nghiệp vụ được chờ. Lưu ý: các mốc 3s, 2.5s, 1.5s là do mình tự cài để minh họa cách 2 tầng phối hợp — KHÔNG dùng để thi xem thư viện nào nhanh hơn.',
       ];
-    case 'retry':
-      if (result.body.attemptResults?.map(({ httpStatus }) => httpStatus).join(',') !== '500,500,200') return [];
+    }
+    case 'retry': {
+      const list = Array.isArray(result) ? result : [result];
+      const firstBody = list[0]?.body;
+      if (!firstBody?.attemptResults?.length) return [];
       return [
-        'User Service trả HTTP 500 ở hai lần đầu. Retry chờ theo cấu hình mặc định, 500 ms sau lỗi đầu và 1.000 ms sau lỗi thứ hai.',
-        'Lần thứ ba nhận được thông tin khách hàng. Order Service trả HTTP 200 cho yêu cầu ban đầu.',
+        'User Service được giả lập bị lỗi tạm thời (HTTP 500) ở 2 lần gọi đầu tiên rồi tự hết ở lần thứ 3.',
+        'Cả Resilience4j Retry lẫn Spring Retry đều giữ người dùng chờ trong âm thầm: gặp lỗi lần 1 nghỉ 500ms rồi gọi lại; lỗi lần 2 nghỉ tiếp 1.000ms rồi gọi lại lần 3.',
+        'Ở lần thứ 3, User Service đã khỏe lại và trả dữ liệu thành công (HTTP 200 OK).',
       ];
+    }
     case 'bulkhead':
       return [
-        'Order Service gửi một đợt yêu cầu song song. Mỗi lượt cần lấy một suất trước khi gọi User Service.',
-        'Lượt lấy được suất tiếp tục xử lý và trả suất khi xong. Nếu hết suất, lượt mới bị từ chối ngay theo cấu hình của demo.',
+        'Gửi 10 yêu cầu ập đến cùng một lúc (mỗi yêu cầu mất 2 giây xử lý).',
+        'Bulkhead tạo ra đúng 3 "chỗ trống" (slot). 3 người vào trước lấy được chỗ để xử lý; 7 người đến sau thấy hết chỗ liền nhận thông báo bận (HTTP 429) ngay trong vài mili-giây, giúp máy chủ không bị treo đơ toàn bộ.',
       ];
     case 'breaker': {
-      const blocked = result.findIndex(({ body }) => body.outcome === 'CIRCUIT_OPEN' && body.attempts === 0);
-      const firstFiveFailed = result.length >= 5 && result.slice(0, 5).every(({ body }) => body.outcome === 'UPSTREAM_5XX');
+      const list = Array.isArray(result) ? result : (result ? [result] : []);
+      const blocked = list.findIndex((item) => item?.body?.outcome === 'CIRCUIT_OPEN' && item?.body?.attempts === 0);
+      const firstFiveFailed = list.length >= 5 && list.slice(0, 5).every((item) => item?.body?.outcome === 'UPSTREAM_5XX');
       const steps = [firstFiveFailed && blocked === 5
-        ? 'Năm lượt đầu đi qua khi mạch còn CLOSED. Cả năm đều gặp lỗi, nên tỷ lệ lỗi 100% vượt ngưỡng 50% và mạch chuyển sang OPEN.'
-        : 'Circuit Breaker ghi nhận kết quả các lời gọi. Với cấu hình mặc định, mạch cần 5 mẫu và mở khi tỷ lệ lỗi đạt ít nhất 50%.'];
-      if (blocked >= 0) steps.push(`Lượt ${blocked + 1} đến khi mạch đang OPEN. Order Service trả HTTP 503 ngay, với 0 lần gọi User.`);
-      if (blocked >= 0) steps.push('Sau khoảng 10 giây, mạch tự chuyển sang HALF_OPEN. Lúc này chỉ một số lượt được phép đi qua để kiểm tra dịch vụ.');
-      if (result.length === 8 && result.slice(6).every(({ body }) => body.outcome === 'OK') && breaker === 'CLOSED') {
-        steps.push('Demo đã khôi phục User Service trước khi gửi thăm dò. Cả hai lượt được phép gọi thật, đều nhận HTTP 200 và mạch trở lại CLOSED.');
+        ? '5 lượt đầu đi qua bình thường và đều gặp lỗi (100% lỗi, vượt ngưỡng cho phép 50%). Cầu dao tự động chuyển sang trạng thái NGẮT MẠCH (OPEN).'
+        : 'Circuit Breaker theo dõi kết quả các cuộc gọi gần đây (5 cuộc gọi gần nhất). Nếu có từ 50% lỗi trở lên, cầu dao sẽ ngắt.'];
+      if (blocked >= 0) steps.push(`Lượt thứ ${blocked + 1} đến khi cầu dao đã ngắt: Order Service từ chối ngay tại chỗ (HTTP 503) với 0 lần gọi sang User Service.`);
+      if (blocked >= 0) steps.push('Sau khoảng 10 giây nghỉ, cầu dao tự chuyển sang trạng thái thử (HALF-OPEN) để kiểm tra xem User Service đã sống lại chưa.');
+      if (list.length === 8 && list.slice(6).every((item) => item?.body?.outcome === 'OK') && breaker === 'CLOSED') {
+        steps.push('Sau khi bật lại User Service, 2 lượt thăm dò đều nhận HTTP 200 OK nên cầu dao đóng lại bình thường (CLOSED).');
       }
       return steps;
     }
-    case 'converge':
-      if (result.length < 4) return [];
+    case 'converge': {
+      const list = Array.isArray(result) ? result : [];
+      if (list.length < 4) return [];
       return [
-        'Pha 1 · Lọc bão tải (Bulkhead): 6 lượt đến cùng lúc nhưng chỉ có 3 suất. 3 lượt quá tải bị từ chối ngay (429) trong 2ms, không làm nghẽn thread pool của Order Service.',
-        'Pha 2 · Tự cứu lỗi nhỏ (Retry): User Service lỗi 2 lần đầu (500). Retry tự động thử lại theo Backoff và thành công ở lần 3 (200 OK) — người dùng không hề biết có lỗi vừa xảy ra.',
-        'Pha 3 · Cắt trễ & Kích hoạt cầu dao: User Service bị treo 3s. Feign Timeout chủ động cắt sau đúng 1s (504), đẩy tỷ lệ lỗi vượt ngưỡng 50% khiến Circuit Breaker lập tức bung sang OPEN.',
-        'Pha 4 · Bảo vệ sinh tồn (Fail-Fast 0ms): Mạch đang OPEN nên Order Service từ chối ngay lập tức chỉ trong 14ms (HTTP 503, 0 lần gọi User). Retry lập tức dừng lại, không thử lại vô ích, ngăn chặn triệt để thảm họa Retry Storm!',
-        result[4] ? 'Pha 5 · Tự chữa lành (Self-Healing): User Service được khôi phục. Sau 3s chờ, mạch tự chuyển sang HALF_OPEN và cho phép lượt thăm dò đi qua. Phản hồi thành công (200 OK), Circuit Breaker tự động khép lại CLOSED, hoàn tất trọn vẹn 1 flow!' : '',
+        'Pha 1 · Lọc bớt tải (Bulkhead): Có 6 lượt đến cùng lúc nhưng chỉ cho phép 3 lượt làm cùng lúc. 3 lượt thừa bị từ chối ngay (429) để giữ máy chủ không bị kẹt.',
+        'Pha 2 · Tự thử lại (Retry): Gặp lỗi nhỏ 2 lần đầu, hệ thống tự thử lại lần 3 và lấy được dữ liệu (200 OK).',
+        'Pha 3 · Cắt treo & Ngắt cầu dao (Timeout + Circuit Breaker): Khi User Service bị treo 3 giây, Timeout ngắt sau 1 giây để không chờ mãi, đồng thời cầu dao nhận thấy lỗi nhiều nên ngắt mạch (OPEN).',
+        'Pha 4 · Từ chối nhanh khi đối tác đang sập (Fail-Fast): Lúc mạch đã mở OPEN, lượt gọi mới bị chặn ngay trong ~14ms (HTTP 503, 0 lần gọi qua mạng). Retry cũng tự dừng lại chứ không cố thử lại vô ích.',
+        list[4] ? 'Pha 5 · Tự hồi phục (Self-Healing): Khi User Service hoạt động trở lại, hệ thống tự gửi 1 lượt dò đường thành công (200 OK) và mở thông mạch trở lại.' : '',
       ].filter(Boolean);
-    case 'fallback':
-      if (result[0]?.status < 400 || result[1]?.body.outcome !== 'FALLBACK') return [];
+    }
+    case 'fallback': {
+      const list = Array.isArray(result) ? result : [result];
+      if ((list[0]?.status ?? 200) < 400 || list[1]?.body?.outcome !== 'FALLBACK') return [];
       return [
-        'User Service liên tục báo lỗi. Luồng kết hợp xử lý các lần thử theo chính sách Retry.',
-        'Khi tắt fallback, lỗi được trả về giao diện. Khi bật fallback, Order Service trả dữ liệu khách dự phòng sau khi luồng gọi thất bại.',
+        'User Service bị giả lập lỗi toàn bộ.',
+        'Khi TẮT Fallback: lỗi sẽ trả thẳng về giao diện người dùng (HTTP 500/503).',
+        'Khi BẬT Fallback: thay vì hiện trang lỗi trắng, hệ thống trả về dữ liệu khách hàng tạm ("Khách dự phòng") với HTTP 200 để trải nghiệm không bị đứt đoạn.',
       ];
+    }
     default:
       return [];
   }
@@ -428,14 +462,15 @@ function CompareMatrix({ scenario }) {
 
 function UnprotectedTable({ scenario, result }) {
   if (scenario === 'retry') {
-    const { body, status, measuredMs } = result;
+    const first = Array.isArray(result) ? result[0] : result;
+    const { body = {}, status, measuredMs } = first || {};
     return (
       <>
         <div className="unprotected-danger-banner">
           <AlertTriangle size={18} />
           <div>
-            <strong>THẢM HỌA THIẾU RETRY:</strong>
-            <p>User Service gặp lỗi 500 thoáng qua ở lần 1. Do không có cơ chế thử lại (Spring Retry / Resilience4j Retry), Order Service lập tức đầu hàng và ném lỗi HTTP 500 về phía Client, làm hỏng toàn bộ giao dịch mua hàng!</p>
+            <strong>HẬU QUẢ KHI THIẾU RETRY:</strong>
+            <p>User Service chỉ bị lỗi tạm thời ở lần gọi đầu tiên. Vì không cài cơ chế tự thử lại, Order Service bỏ cuộc ngay và ném thẳng lỗi HTTP 500 về cho người dùng!</p>
           </div>
         </div>
         <div className="table-frame" tabIndex={0} role="region" aria-label="Bảng kết quả không có Retry">
@@ -453,13 +488,13 @@ function UnprotectedTable({ scenario, result }) {
             <tbody>
               <tr>
                 <th scope="row">
-                  Tra cứu khách hàng (Không Retry)
+                  Tra cứu khách hàng (Không có Retry)
                   <small style={{ display: 'block', color: '#ef4444', fontWeight: 600, marginTop: '2px' }}>
-                    💥 Bị ném lỗi 500 ngay lần 1
+                    💥 Gặp lỗi lần 1 là hỏng luôn
                   </small>
                 </th>
-                <td><span className="http-code http-error">{status}</span></td>
-                <td><strong style={{ color: '#ef4444' }}>User Service trả lỗi 5xx</strong></td>
+                <td><span className="http-code http-error">{status ?? 500}</span></td>
+                <td><strong style={{ color: '#ef4444' }}>User Service báo lỗi 5xx</strong></td>
                 <td className="numeric">{milliseconds(measuredMs ?? body?.elapsedMs)}</td>
                 <td className="numeric" style={{ color: '#ef4444', fontWeight: 'bold' }}>1 (Không thử lại)</td>
                 <td><span style={{ color: '#ef4444' }}>— (Hủy đơn hàng)</span></td>
@@ -473,14 +508,14 @@ function UnprotectedTable({ scenario, result }) {
 
   if (scenario === 'timeout') {
     const r = Array.isArray(result) ? result[0] : result;
-    const { status, measuredMs, body } = r || {};
+    const { status, measuredMs, body = {} } = r || {};
     return (
       <>
         <div className="unprotected-danger-banner">
           <AlertTriangle size={18} />
           <div>
-            <strong>HIỂM HỌA TREO NGHẼN LUỒNG:</strong>
-            <p>User Service bị nghẽn 4.000ms. Do KHÔNG CÓ Feign readTimeout (3s) hay TimeLimiter (1.5s), luồng xử lý bị phong tỏa suốt hơn 4 giây. Connection Pool sẽ nhanh chóng cạn kiệt nếu có nhiều request cùng tới!</p>
+            <strong>HIỂM HỌA KHI KHÔNG ĐẶT TIMEOUT:</strong>
+            <p>User Service bị chậm 4 giây. Vì không có giới hạn chờ (Timeout), luồng xử lý bên Order Service cũng bị đứng im chờ hết 4 giây. Nếu nhiều người bấm cùng lúc, máy chủ sẽ cạn sạch luồng và đơ cứng!</p>
           </div>
         </div>
         <div className="table-frame" tabIndex={0} role="region" aria-label="Bảng kết quả không có Timeout">
@@ -497,13 +532,13 @@ function UnprotectedTable({ scenario, result }) {
             <tbody>
               <tr>
                 <th scope="row">
-                  Gọi trực tiếp User Service (Không Timeout)
+                  Gọi thẳng User Service (Không Timeout)
                   <small style={{ display: 'block', color: '#f59e0b', fontWeight: 600, marginTop: '2px' }}>
-                    ⏳ Giam giữ Worker Thread suốt 4 giây
+                    ⏳ Giữ chết 1 luồng xử lý suốt 4 giây
                   </small>
                 </th>
                 <td><span className="http-code http-ok">{status ?? 200}</span></td>
-                <td><strong>Đã nhận dữ liệu (Sau 4 giây ngâm)</strong></td>
+                <td><strong>Nhận được dữ liệu (nhưng mất 4 giây chờ)</strong></td>
                 <td className="numeric" style={{ color: '#ef4444', fontWeight: 'bold' }}>{milliseconds(measuredMs ?? body?.elapsedMs ?? 4016)}</td>
                 <td className="numeric">1</td>
               </tr>
@@ -515,36 +550,36 @@ function UnprotectedTable({ scenario, result }) {
   }
 
   if (scenario === 'bulkhead') {
-    const { body, status } = result;
+    const { body = {}, status } = result || {};
     return (
       <>
         <div className="unprotected-danger-banner">
           <AlertTriangle size={18} />
           <div>
-            <strong>CẠN KIỆT 100% THREAD POOL (NẠN ĐÓI TÀI NGUYÊN):</strong>
-            <p>10 request đồng thời ập vào. Do không có vách ngăn Bulkhead (Semaphore hạn ngạch 3 suất), toàn bộ 10/10 worker threads của Order Service bị chiếm trọn trong 2 giây. Các nghiệp vụ quan trọng khác (thanh toán, tạo đơn) bị tê liệt hoàn toàn!</p>
+            <strong>CẠN KIỆT LUỒNG XỬ LÝ DO THIẾU BULKHEAD:</strong>
+            <p>10 người cùng bấm một lúc. Vì không có giới hạn số chỗ (Bulkhead 3 chỗ), cả 10 người đều ùa vào chiếm hết 10/10 luồng làm việc của máy chủ trong 2 giây. Các chức năng quan trọng khác (tạo đơn, thanh toán) bị đơ theo!</p>
           </div>
         </div>
         <div className="table-frame" tabIndex={0} role="region" aria-label="Bảng kết quả không có Bulkhead">
           <table className="result-table">
-            <caption>10 lượt song song · HTTP {status} · {milliseconds(body?.totalMs)} (10/10 luồng bị chiếm dụng)</caption>
+            <caption>10 lượt cùng lúc · HTTP {status} · {milliseconds(body?.totalMs)} (Chiếm hết 10/10 luồng)</caption>
             <thead>
               <tr>
                 <th scope="col">Kết quả từng lượt</th>
-                <th scope="col">Số lượt chấp thuận</th>
-                <th scope="col">Tác động tài nguyên</th>
+                <th scope="col">Số lượt</th>
+                <th scope="col">Tác động tới máy chủ</th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <th scope="row">Thành công nhưng ngâm 2 giây</th>
+                <th scope="row">Nhận vào xử lý hết nhưng đơ 2 giây</th>
                 <td className="numeric">10 / 10</td>
-                <td><strong style={{ color: '#ef4444' }}>Chiếm trọn 10/10 Threads trong 2.000ms 🚨</strong></td>
+                <td><strong style={{ color: '#ef4444' }}>Chiếm sạch 10/10 luồng suốt 2.000ms 🚨</strong></td>
               </tr>
               <tr>
-                <th scope="row">Lượt bị chặn bảo vệ (429)</th>
+                <th scope="row">Lượt bị chặn báo bận để bảo vệ (429)</th>
                 <td className="numeric">0 / 10</td>
-                <td><span style={{ color: '#ef4444' }}>0 lượt chặn (Không có Bulkhead bảo vệ)</span></td>
+                <td><span style={{ color: '#ef4444' }}>Không chặn bớt lượt nào (Không có Bulkhead)</span></td>
               </tr>
             </tbody>
           </table>
@@ -555,14 +590,14 @@ function UnprotectedTable({ scenario, result }) {
   }
 
   if (scenario === 'breaker') {
-    const responses = Array.isArray(result) ? result : [result];
+    const responses = Array.isArray(result) ? result : (result ? [result] : []);
     return (
       <>
         <div className="unprotected-danger-banner">
           <AlertTriangle size={18} />
           <div>
-            <strong>THẢM HỌA THIẾU CIRCUIT BREAKER (DỘI BOM ĐỐI TÁC):</strong>
-            <p>Downstream User Service đã chết 100%. Do không có Circuit Breaker, Order Service vẫn mù quáng gửi cả 6 request qua mạng. Không có Fail-Fast (14ms), vừa lãng phí tài nguyên vừa dội tải đè bẹp đối tác đang gặp sự cố!</p>
+            <strong>HẬU QUẢ KHI THIẾU CIRCUIT BREAKER (CẦU DAO NGẮT):</strong>
+            <p>User Service đã hỏng 100%, nhưng vì không có cầu dao tự ngắt, Order Service vẫn cố gửi cả 6 cuộc gọi qua mạng. Vừa tốn thời gian chờ, vừa làm dịch vụ hỏng càng quá tải thêm!</p>
           </div>
         </div>
         <div className="table-frame" tabIndex={0} role="region" aria-label="Bảng kết quả không có Circuit Breaker">
@@ -577,22 +612,24 @@ function UnprotectedTable({ scenario, result }) {
               </tr>
             </thead>
             <tbody>
-              {responses.map(({ body, status, measuredMs }, index) => (
+              {responses.map((item, index) => {
+                const { body = {}, status, measuredMs } = item || {};
+                return (
                 <tr key={index}>
                   <th scope="row">
-                    Lượt {index + 1}/6 (Mạch đóng mù quáng)
+                    Lượt {index + 1}/6 (Không tự ngắt)
                     {index === 5 && (
                       <small style={{ display: 'block', color: '#ef4444', fontWeight: 600, marginTop: '2px' }}>
-                        💥 Không có Fail-Fast: Vẫn gọi thật sang User Service
+                        💥 Vẫn cố gửi qua mạng sang User Service đang hỏng
                       </small>
                     )}
                   </th>
-                  <td><span className="http-code http-error">{status}</span></td>
-                  <td><strong style={{ color: '#ef4444' }}>User Service trả lỗi 5xx</strong></td>
+                  <td><span className="http-code http-error">{status ?? 500}</span></td>
+                  <td><strong style={{ color: '#ef4444' }}>User Service báo lỗi 5xx</strong></td>
                   <td className="numeric">{milliseconds(measuredMs ?? body?.elapsedMs)}</td>
                   <td className="numeric" style={{ color: '#ef4444', fontWeight: 'bold' }}>{body?.attempts ?? 1} (Gọi thật)</td>
                 </tr>
-              ))}
+              );})}
             </tbody>
           </table>
         </div>
@@ -617,7 +654,7 @@ export default function DemoResults({ scenario, result, breaker, busy, error, vi
         </div>
       );
     }
-    const payload = Array.isArray(result) ? result.map(({ body }) => body) : result.body;
+    const payload = Array.isArray(result) ? result.map((item) => item?.body ?? item) : result?.body;
     return (
       <>
         <div className="result-toolbar">
@@ -638,7 +675,7 @@ export default function DemoResults({ scenario, result, breaker, busy, error, vi
 
   if (!result) return <div className="empty" role="status"><Activity size={20} />{busy ? 'Đang chờ phản hồi…' : 'Chạy kịch bản để xem kết quả.'}</div>;
 
-  const payload = Array.isArray(result) ? result.map(({ body }) => body) : result.body;
+  const payload = Array.isArray(result) ? result.map((item) => item?.body ?? item) : result?.body;
   const steps = busy || error ? [] : describeProcess(scenario, result, breaker);
   return <>
     <div className="result-toolbar">

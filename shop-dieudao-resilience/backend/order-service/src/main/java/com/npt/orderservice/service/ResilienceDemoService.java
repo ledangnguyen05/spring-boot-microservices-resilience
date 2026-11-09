@@ -422,8 +422,22 @@ public class ResilienceDemoService {
                 msg = "user-service trả lỗi HTTP " + fe.status();
             }
         } else if (t instanceof org.springframework.web.client.ResourceAccessException) {
-            outcome = "RESTCLIENT_TIMEOUT"; status = 504;
-            msg = "RestClient read timeout (2.5s): " + (t.getCause() != null ? t.getCause().getMessage() : t.getMessage());
+            boolean isConnect = false;
+            Throwable cur = t.getCause();
+            while (cur != null) {
+                if (cur instanceof ConnectException || (cur.getMessage() != null && cur.getMessage().contains("Connection refused"))) {
+                    isConnect = true;
+                    break;
+                }
+                cur = cur.getCause();
+            }
+            if (isConnect) {
+                outcome = "UPSTREAM_DOWN"; status = 503;
+                msg = "RestClient không thể kết nối đến User Service (server đang tắt hoặc sai cổng)";
+            } else {
+                outcome = "RESTCLIENT_TIMEOUT"; status = 504;
+                msg = "RestClient read timeout (2.5s): " + (t.getCause() != null ? t.getCause().getMessage() : t.getMessage());
+            }
         } else if (t.getClass().getSimpleName().contains("Timeout")) {
             outcome = "TIMEOUT"; status = 504;
             msg = "TimeLimiter hết giờ (1.5s): " + (t.getCause() != null ? t.getCause().getMessage() : t.getMessage());

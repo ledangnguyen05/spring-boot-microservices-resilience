@@ -37,14 +37,14 @@ export default function FlowVisualizer({
     speedRef.current = speed;
   }, [speed]);
 
-  // When switching scenario: strictly STOP, reset to 0
+  // When switching scenario or mode: strictly STOP, reset to 0
   useEffect(() => {
     setIsPlaying(false);
     isSteppingRef.current = false;
     stepTargetTimeRef.current = null;
     animTimeRef.current = 0;
     setCurrentTime(0);
-  }, [scenarioId]);
+  }, [scenarioId, scenarioMode]);
 
   // When user clicks the main Run button in App, START the natural flow!
   useEffect(() => {
@@ -325,10 +325,10 @@ export default function FlowVisualizer({
       }
     } else {
       phaseMilestones = [
-        { name: '1. Trực tiếp (Ngâm 4s - 200 OK)', time: 0 },
-        { name: '2. Feign (Cắt sau 3s - 504)', time: 3100 },
-        { name: '3. RestClient (Cắt sau 2.5s - 504)', time: 6200 },
-        { name: '4. TimeLimiter (Cắt sau 1.5s - 504)', time: 9300 }
+        { name: '1. Không Timeout (Chờ 4s)', time: 0 },
+        { name: '2. Feign (Mẫu 3s - Tầng mạng)', time: 3100 },
+        { name: '3. RestClient (Mẫu 2.5s - Tầng mạng)', time: 6200 },
+        { name: '4. TimeLimiter (Mẫu 1.5s - Tầng app)', time: 9300 }
       ];
 
       if (t > 0 || isPlaying) {
@@ -339,28 +339,28 @@ export default function FlowVisualizer({
             const p = easeInOut(pT / 0.25);
             packetX = gwX + p * (userX - gwX);
             packetColor = '#6366f1';
-            packetLabel = 'Lượt 1: Gọi trực tiếp User';
+            packetLabel = 'Lượt 1: Gọi thẳng (Không Timeout)';
           } else if (pT < 0.75) {
             packetX = userX;
             isUserError = true;
             packetColor = '#f59e0b';
             const waitS = ((pT - 0.25) / 0.5 * 4).toFixed(1);
-            packetLabel = `TREO NGÂM ${waitS}s / 4.0s ⏳`;
+            packetLabel = `ĐỨNG CHỜ ${waitS}s / 4.0s ⏳`;
             stationRing = { x: userX, y: userY, progress: (pT - 0.25) / 0.5, label: `${waitS}s` };
           } else {
             const p = easeInOut((pT - 0.75) / 0.25);
             packetX = userX - p * (userX - gwX);
             packetColor = '#22c55e';
-            packetLabel = '200 OK (Sau 4.016ms)';
+            packetLabel = '200 OK (Sau 4 giây chờ)';
           }
           narrative = {
-            stepTitle: 'Lượt đo 1/4 (Dòng 1 trên bảng): Gọi trực tiếp User Service — KHÔNG CÓ TIMEOUT',
-            badge: 'Không có bảo vệ',
-            action: 'Gọi trực tiếp User Service (:8081) không qua chốt chặn timeout',
-            desc: 'User Service bị quá tải I/O giả lập 4.000ms. Do KHÔNG CÓ TIMEOUT bảo vệ, luồng xử lý bị treo ngâm socket suốt hơn 4 giây mới nhận được phản hồi 200 OK!',
-            resilience: 'HIỂM HỌA: Nếu nhiều người dùng cùng truy cập, thread pool và connection pool sẽ cạn kiệt nhanh chóng, dẫn tới sập dây chuyền (Cascading Failure).',
+            stepTitle: 'Lượt 1/4: Không cài Timeout — Buộc phải đứng chờ đủ 4 giây',
+            badge: 'Chưa được bảo vệ',
+            action: 'Gọi thẳng User Service (:8081) khi nó đang bị kẹt chậm 4 giây',
+            desc: 'Vì không có giới hạn chờ, luồng xử lý phải ngồi đợi trọn 4 giây mới xong. Nếu bên kia kẹt 1 phút hay kẹt vĩnh viễn, máy chủ của bạn cũng đứng im tương ứng.',
+            resilience: 'Hậu quả: Vài chục người dùng bấm cùng lúc là máy chủ cạn sạch luồng xử lý và sập theo.',
             statusColor: '#f59e0b',
-            code: 'LƯỢT 1: TREO 4s (200 OK)'
+            code: 'CHỜ HẾT 4s'
           };
         } else if (t < 6200) {
           // RUN 2: Feign readTimeout = 3000ms (3100 -> 6200ms)
@@ -369,34 +369,34 @@ export default function FlowVisualizer({
             const p = easeInOut(pT / 0.25);
             packetX = gwX + p * (userX - gwX);
             packetColor = '#6366f1';
-            packetLabel = 'Lượt 2: OpenFeign (3s)';
+            packetLabel = 'Lượt 2: Feign (Cài mẫu 3s)';
           } else if (pT < 0.65) {
             packetX = userX;
             isUserError = true;
             packetColor = '#f59e0b';
             const waitS = ((pT - 0.25) / 0.4 * 3).toFixed(1);
-            packetLabel = `FEIGN ĐẾM 3s: ${waitS}s ⏳`;
+            packetLabel = `CHỜ TỐI ĐA 3s: ${waitS}s ⏳`;
             stationRing = { x: orderX, y: orderY, progress: (pT - 0.25) / 0.4, label: `${waitS}s` };
           } else if (pT < 0.8) {
             pipe2Cut = true;
             packetX = (orderX + userX) / 2;
             packetColor = '#ef4444';
-            packetLabel = 'FEIGN CẮT SAU 3s ✂️';
+            packetLabel = 'FEIGN ĐÓNG KẾT NỐI ✂️';
           } else {
             pipe2Cut = true;
             const p = easeInOut((pT - 0.8) / 0.2);
             packetX = orderX - p * (orderX - gwX);
             packetColor = '#ef4444';
-            packetLabel = '504 GATEWAY TIMEOUT (3s)';
+            packetLabel = '504 HẾT GIỜ (3s)';
           }
           narrative = {
-            stepTitle: 'Lượt đo 2/4 (Dòng 2 trên bảng): OpenFeign readTimeout — CẮT SAU ĐÚNG 3.000ms',
-            badge: 'Tầng Feign Client',
-            action: 'OpenFeign readTimeout: 3000ms đơn phương ngắt kết nối socket',
-            desc: 'User Service vẫn ngâm 4s, nhưng đúng mốc 3.000ms định cấu hình trong application.yml, Feign tự động hủy socket và trả mã HTTP 504 Gateway Timeout.',
-            resilience: 'Giải phóng kết nối socket sớm 1 giây so với gọi trực tiếp, ngăn rò rỉ tài nguyên mạng.',
+            stepTitle: 'Lượt 2/4: Timeout ở lớp kết nối HTTP (OpenFeign — cài mẫu 3 giây)',
+            badge: 'Lớp kết nối mạng',
+            action: 'OpenFeign chỉ cho phép 1 lần gọi HTTP chờ tối đa 3 giây',
+            desc: 'User Service vẫn chậm 4s, nhưng ở lớp mạng ta cài Feign chờ tối đa 3s. Hết 3s, Feign chủ động ngắt kết nối và báo mã 504 thay vì đợi tiếp.',
+            resilience: 'Lưu ý: Con số 3s là do ta tự cài để bảo vệ từng cuộc gọi HTTP đơn lẻ, giúp không bị rò rỉ kết nối mạng.',
             statusColor: '#ef4444',
-            code: 'LƯỢT 2: FEIGN CẮT 3s'
+            code: 'FEIGN NGẮT 3s'
           };
         } else if (t < 9300) {
           // RUN 3: Spring 6 RestClient readTimeout = 2500ms (6200 -> 9300ms)
@@ -405,34 +405,34 @@ export default function FlowVisualizer({
             const p = easeInOut(pT / 0.25);
             packetX = gwX + p * (userX - gwX);
             packetColor = '#6366f1';
-            packetLabel = 'Lượt 3: RestClient (2.5s)';
+            packetLabel = 'Lượt 3: RestClient (Cài mẫu 2.5s)';
           } else if (pT < 0.65) {
             packetX = userX;
             isUserError = true;
             packetColor = '#f59e0b';
             const waitS = ((pT - 0.25) / 0.4 * 2.5).toFixed(1);
-            packetLabel = `RESTCLIENT 2.5s: ${waitS}s ⏳`;
+            packetLabel = `CHỜ TỐI ĐA 2.5s: ${waitS}s ⏳`;
             stationRing = { x: orderX, y: orderY, progress: (pT - 0.25) / 0.4, label: `${waitS}s` };
           } else if (pT < 0.8) {
             pipe2Cut = true;
             packetX = (orderX + userX) / 2;
             packetColor = '#f97316';
-            packetLabel = 'RESTCLIENT CẮT 2.5s ✂️';
+            packetLabel = 'RESTCLIENT ĐÓNG KẾT NỐI ✂️';
           } else {
             pipe2Cut = true;
             const p = easeInOut((pT - 0.8) / 0.2);
             packetX = orderX - p * (orderX - gwX);
             packetColor = '#f97316';
-            packetLabel = '504 RESTCLIENT (2.5s)';
+            packetLabel = '504 HẾT GIỜ (2.5s)';
           }
           narrative = {
-            stepTitle: 'Lượt đo 3/4 (Dòng 3 trên bảng): Spring 6 RestClient — CẮT SAU 2.500ms',
-            badge: 'Tầng RestClient Spring 6',
-            action: 'SimpleClientHttpRequestFactory readTimeout: 2500ms ngắt kết nối',
-            desc: 'Sử dụng client HTTP hiện đại của Spring 6 (RestClient) với SimpleClientHttpRequestFactory cấu hình readTimeout=2500ms. Cắt sớm hơn Feign 500ms.',
-            resilience: 'Minh họa trọn vẹn chủ đề seminar Feign/RestClient timeout với cả 2 công nghệ Java microservices.',
+            stepTitle: 'Lượt 3/4: Timeout ở lớp kết nối HTTP (Spring 6 RestClient — cài mẫu 2.5 giây)',
+            badge: 'Lớp kết nối mạng',
+            action: 'Spring RestClient cài hạn mức đọc 2.5 giây cho 1 cuộc gọi HTTP',
+            desc: 'Tương tự Feign nhưng dùng thư viện RestClient mới của Spring 6. Khi cài 2.5s mà bên kia mất 4s, kết nối tự đóng ở giây 2.5 và trả mã 504.',
+            resilience: 'Giống Feign, RestClient kiểm soát thời gian ở lớp HTTP Socket — nhưng nếu bọc Retry 3 lần bên ngoài, tổng thời gian chờ sẽ bị nhân lên.',
             statusColor: '#f97316',
-            code: 'LƯỢT 3: RESTCLIENT 2.5s'
+            code: 'RESTCLIENT NGẮT 2.5s'
           };
         } else {
           // RUN 4: Resilience4j TimeLimiter = 1500ms (9300 -> 12500ms)
@@ -441,34 +441,34 @@ export default function FlowVisualizer({
             const p = easeInOut(pT / 0.25);
             packetX = gwX + p * (userX - gwX);
             packetColor = '#6366f1';
-            packetLabel = 'Lượt 4: TimeLimiter (1.5s)';
+            packetLabel = 'Lượt 4: TimeLimiter (Cài mẫu 1.5s)';
           } else if (pT < 0.55) {
             packetX = userX;
             isUserError = true;
             packetColor = '#f59e0b';
             const waitS = ((pT - 0.25) / 0.3 * 1.5).toFixed(1);
-            packetLabel = `ĐẾM ĐẾN 1.5s: ${waitS}s ⏳`;
+            packetLabel = `NGÂN SÁCH TỔNG 1.5s: ${waitS}s ⏳`;
             stationRing = { x: orderX, y: orderY, progress: (pT - 0.25) / 0.3, label: `${waitS}s` };
           } else if (pT < 0.75) {
             pipe2Cut = true;
             packetX = (orderX + userX) / 2;
             packetColor = '#ec4899';
-            packetLabel = 'TIMELIMITER CANCEL 1.5s ⏱️';
+            packetLabel = 'TIMELIMITER HỦY TÁC VỤ ⏱️';
           } else {
             pipe2Cut = true;
             const p = easeInOut((pT - 0.75) / 0.25);
             packetX = orderX - p * (orderX - gwX);
             packetColor = '#ec4899';
-            packetLabel = '504 TIMELIMITER (1.5s)';
+            packetLabel = '504 HẾT NGÂN SÁCH (1.5s)';
           }
           narrative = {
-            stepTitle: 'Lượt đo 4/4 (Dòng 4 trên bảng): Resilience4j TimeLimiter — CẮT NHANH NHẤT (1.500ms)',
-            badge: 'Tầng ứng dụng Java',
-            action: 'TimeLimiter timeoutDuration: 1500ms hủy CompletableFuture',
-            desc: 'Resilience4j TimeLimiter bảo vệ ở tầng ứng dụng: Hủy Future ngay sau 1.500ms, giải phóng Worker Thread sớm nhất (tiết kiệm tới 2.5s so với gọi trực tiếp)!',
-            resilience: 'TimeLimiter là lá chắn phản ứng nhanh nhất, kết hợp cùng Feign (3s) và RestClient (2.5s) tạo thành mô hình phòng thủ nhiều lớp hoàn hảo.',
+            stepTitle: 'Lượt 4/4: Timeout ở lớp ứng dụng (Resilience4j TimeLimiter — cài mẫu 1.5 giây)',
+            badge: 'Lớp nghiệp vụ ứng dụng',
+            action: 'TimeLimiter khống chế TỔNG thời gian chờ của cả tính năng (SLA = 1.5s)',
+            desc: 'Khác với Feign/RestClient (chỉ đếm từng lần gửi mạng), TimeLimiter đặt "trần" cho tổng thời gian người dùng phải đợi. Quá 1.5s là hủy tác vụ trả 504 ngay.',
+            resilience: 'Kết luận: Hai lớp không thi xem ai nhanh hơn (vì con số do mình tự đặt), mà phối hợp bảo vệ cả ở tầng mạng lẫn tầng tổng nghiệp vụ.',
             statusColor: '#ec4899',
-            code: 'LƯỢT 4: TIMELIMITER 1.5s'
+            code: 'TIMELIMITER 1.5s'
           };
         }
       }
@@ -536,13 +536,13 @@ export default function FlowVisualizer({
           packetColor = '#ef4444';
           packetLabel = 'HTTP 500 💥 (HỦY ĐƠN HÀNG)';
           narrative = {
-            stepTitle: 'Bước 4/4: Khách hàng nhận lỗi sụp đổ — Đơn hàng #001 bị hủy',
-            badge: 'Giao dịch sụp đổ',
+            stepTitle: 'Bước 4/4: Khách hàng nhận màn hình lỗi — Đơn hàng #001 bị hủy',
+            badge: 'Giao dịch thất bại',
             action: 'Client nhận màn hình lỗi HTTP 500',
-            desc: 'Khách hàng nhận thông báo thất bại, đơn hàng bị hủy bỏ. Người dùng buộc phải thao tác đặt hàng lại từ đầu, gây ức chế và giảm tỷ lệ chuyển đổi!',
-            resilience: 'So sánh: Khi có Retry, hệ thống âm thầm thử lại sau 500ms và tự cứu thành công 200 OK trong suốt.',
+            desc: 'Khách hàng nhận thông báo lỗi và đơn hàng bị hủy. Người dùng buộc phải bấm đặt lại từ đầu, dễ bỏ giỏ hàng!',
+            resilience: 'So sánh: Khi có Retry, hệ thống âm thầm chờ 500ms rồi thử lại nên vẫn trả về kết quả bình thường (200 OK).',
             statusColor: '#ef4444',
-            code: 'HTTP 500 SẬP'
+            code: 'HTTP 500 LỖI'
           };
         }
       }
@@ -550,9 +550,9 @@ export default function FlowVisualizer({
       phaseMilestones = [
         { name: '1. Gửi yêu cầu', time: 0 },
         { name: '2. Thử lần 1 (500)', time: 1200 },
-        { name: '3. Backoff 500ms', time: 3200 },
+        { name: '3. Nghỉ 500ms', time: 3200 },
         { name: '4. Thử lần 2 (500)', time: 4600 },
-        { name: '5. Backoff 1000ms', time: 6600 },
+        { name: '5. Nghỉ 1000ms', time: 6600 },
         { name: '6. Thử lần 3 (200 OK)', time: 8400 },
         { name: '7. Trả về Client', time: 10800 }
       ];
@@ -564,11 +564,11 @@ export default function FlowVisualizer({
           packetColor = '#6366f1';
           packetLabel = 'GET /api/orders/1';
           narrative = {
-            stepTitle: 'Giai đoạn khởi đầu: Client gửi yêu cầu tra cứu qua Gateway',
-            badge: 'Bắt đầu luồng',
+            stepTitle: 'Bắt đầu: Client gửi yêu cầu tra cứu qua Gateway',
+            badge: 'Khởi động',
             action: 'Client -> Gateway -> Order Service',
-            desc: 'API Gateway tiếp nhận yêu cầu và chuyển tiếp tới Order Service. Resilience4j Retry bọc bên ngoài cuộc gọi này.',
-            resilience: 'Tầng Retry chuẩn bị sẵn sàng chính sách: thử lại tối đa 3 lần với Exponential Backoff.',
+            desc: 'API Gateway nhận yêu cầu và chuyển sang Order Service. Cơ chế tự thử lại (Resilience4j Retry & Spring Retry) đang trực sẵn.',
+            resilience: 'Quy tắc: Nếu lỗi, hệ thống sẽ tự thử tối đa 3 lần kèm khoảng nghỉ tăng dần giữa các lần.',
             statusColor: '#6366f1',
             code: 'KHỞI TẠO'
           };
@@ -578,42 +578,42 @@ export default function FlowVisualizer({
           packetColor = '#6366f1';
           packetLabel = 'Lần 1: Gọi User';
           narrative = {
-            stepTitle: 'Bước 1/5: Lần thử 1 — Gặp sự cố mạng chập chờn (HTTP 500)',
-            badge: 'Sự cố thoáng qua',
-            action: 'Lần 1 gọi User Service bị lỗi 500',
-            desc: 'Order Service gọi User Service lần 1. Do mạng rung lắc hoặc service mới reboot, User Service trả về lỗi HTTP 500.',
-            resilience: 'Cơ chế Retry can thiệp: Giữ lại lỗi, CHƯA BÁO VỀ CLIENT để bảo vệ trải nghiệm người dùng.',
+            stepTitle: 'Bước 1/5: Lần gọi 1 — User Service báo lỗi tạm thời (HTTP 500)',
+            badge: 'Lỗi thoáng qua',
+            action: 'Lần 1 gọi User Service gặp lỗi 500',
+            desc: 'Order Service gọi User Service lần 1. Giả sử mạng vừa chớp nhẹ hoặc dịch vụ bên kia mới khởi động lại nên trả lỗi 500.',
+            resilience: 'Retry giữ lỗi lại tại Order Service, CHƯA vội báo hỏng về màn hình của khách.',
             statusColor: '#ef4444',
-            code: 'THỬ LẦN 1: 500'
+            code: 'LẦN 1: LỖI 500'
           };
         } else if (t < 3200) {
           const p = easeInOut((t - 2200) / 1000);
           packetX = userX - p * (userX - orderX);
           packetColor = '#ef4444';
-          packetLabel = 'Lỗi 500 💥 (Quay về)';
+          packetLabel = 'Lỗi 500 💥 (Giữ lại)';
           isUserError = true;
           narrative = {
-            stepTitle: 'Bước 1/5: Lần 1 thất bại — Thu hồi request tại Order Service',
-            badge: 'Chặn lỗi ở cổng',
-            action: 'Lỗi 500 bị chặn lại tại Order Service',
-            desc: 'User Service trả lỗi 500. Retry chặn lỗi lại, không trả về Client mà thu hồi request về Order Service để chuẩn bị thử lại.',
-            resilience: 'Chặn lỗi ở tầng mạng để tự động cứu chữa thay vì làm gián đoạn người dùng.',
+            stepTitle: 'Bước 1/5: Lần 1 thất bại — Giữ lỗi ở Order Service để thử lại',
+            badge: 'Chặn lỗi lại',
+            action: 'Order Service giữ lỗi, chưa trả về Client',
+            desc: 'User Service trả lỗi 500. Thay vì đẩy thẳng lỗi ra màn hình, Retry giữ yêu cầu lại để chuẩn bị gọi thử lần 2.',
+            resilience: 'Âm thầm xử lý lỗi ở phía sau để trải nghiệm người dùng không bị gián đoạn.',
             statusColor: '#ef4444',
             code: 'LỖI 500'
           };
         } else if (t < 4600) {
           packetX = orderX;
           packetColor = '#f59e0b';
-          packetLabel = 'Backoff 500ms ⏳';
+          packetLabel = 'Nghỉ 500ms ⏳';
           stationRing = { x: orderX, y: orderY, progress: (t - 3200) / 1400, label: '500ms' };
           narrative = {
-            stepTitle: 'Bước 2/5: Exponential Backoff 500ms — Đệm thời gian nghỉ',
-            badge: 'Đếm lùi Backoff',
-            action: 'Tạm dừng 500ms trước khi thử lại',
-            desc: 'Hệ thống không gọi dồn dập ngay mà áp dụng thuật toán Exponential Backoff nghỉ 500ms để đối tác có thời gian tự hồi phục.',
-            resilience: 'Nguyên lý chống bão Retry (Anti-Retry Storm): Tránh làm tê liệt đối tác đang ngộp thở.',
+            stepTitle: 'Bước 2/5: Nghỉ ngắn 500ms trước khi thử lại (Exponential Backoff)',
+            badge: 'Giãn nhịp nghỉ',
+            action: 'Tạm dừng 500ms chờ bên kia ổn định lại',
+            desc: 'Hệ thống không gọi dồn dập ngay lập tức mà nghỉ 500ms để User Service kịp hoàn tất khởi động hoặc qua cơn nghẽn.',
+            resilience: 'Giãn nhịp nghỉ giúp tránh tình trạng hàng nghìn người cùng thử lại một lúc gây quá tải thêm.',
             statusColor: '#f59e0b',
-            code: 'BACKOFF 500ms'
+            code: 'NGHỈ 500ms'
           };
         } else if (t < 5600) {
           const p = easeInOut((t - 4600) / 1000);
@@ -621,42 +621,42 @@ export default function FlowVisualizer({
           packetColor = '#f59e0b';
           packetLabel = 'Lần 2: Thử lại';
           narrative = {
-            stepTitle: 'Bước 3/5: Lần thử 2 — Đối tác vẫn chưa kịp hồi phục',
-            badge: 'Kiên trì thử lại',
-            action: 'Tự động gửi lại request lần 2',
-            desc: 'Sau 500ms nghỉ, Order Service tự động bắn lại request lần 2. User Service vẫn chưa hoàn tất reboot (vẫn lỗi 500).',
-            resilience: 'Retry tiếp tục nhân đôi thời gian chờ lên 1000ms!',
+            stepTitle: 'Bước 3/5: Tự thử lại lần 2 — User Service vẫn chưa kịp khỏe',
+            badge: 'Thử lại lần 2',
+            action: 'Tự động gửi lại yêu cầu lần 2',
+            desc: 'Sau khi nghỉ 500ms, Order Service tự gọi lại lần 2. Trong kịch bản này, User Service vẫn báo lỗi 500 lần nữa.',
+            resilience: 'Vẫn còn lượt thử (tối đa 3 lần), nên hệ thống nhân đôi thời gian nghỉ lên 1000ms!',
             statusColor: '#f59e0b',
-            code: 'THỬ LẦN 2: 500'
+            code: 'LẦN 2: LỖI 500'
           };
         } else if (t < 6600) {
           const p = easeInOut((t - 5600) / 1000);
           packetX = userX - p * (userX - orderX);
           packetColor = '#ef4444';
-          packetLabel = 'Lỗi 500 💥 (Quay về)';
+          packetLabel = 'Lỗi 500 💥 (Giữ lại)';
           isUserError = true;
           narrative = {
-            stepTitle: 'Bước 3/5: Lần 2 vẫn thất bại — Tiếp tục nhân đôi thời gian',
-            badge: 'Nhân đôi Backoff',
+            stepTitle: 'Bước 3/5: Lần 2 vẫn lỗi — Tăng thời gian nghỉ lên gấp đôi (1000ms)',
+            badge: 'Nhân đôi giờ nghỉ',
             action: 'Nhân đôi thời gian chờ lên 1000ms',
-            desc: 'Lần thử thứ 2 vẫn thất bại. Retry tiếp tục giữ lại lỗi và nhân đôi thời gian nghỉ lên 1000ms trước khi buông xuôi.',
-            resilience: 'Cơ chế tự điều chỉnh nhịp độ thông minh để đối tác hoàn tất khởi động lại.',
+            desc: 'Lần 2 vẫn thất bại. Retry tiếp tục giữ lỗi lại và tăng thời gian nghỉ lên 1000ms cho lần gọi cuối cùng.',
+            resilience: 'Giãn nhịp từ 500ms ➔ 1000ms giúp cho dịch vụ bên kia thêm thời gian hồi phục.',
             statusColor: '#ef4444',
             code: 'LỖI 500'
           };
         } else if (t < 8400) {
           packetX = orderX;
           packetColor = '#f59e0b';
-          packetLabel = 'Backoff 1000ms ⏳';
+          packetLabel = 'Nghỉ 1000ms ⏳';
           stationRing = { x: orderX, y: orderY, progress: (t - 6600) / 1800, label: '1000ms' };
           narrative = {
-            stepTitle: 'Bước 4/5: Exponential Backoff 1000ms — Cơ hội reboot trọn vẹn',
-            badge: 'Đếm lùi Backoff',
-            action: 'Nghỉ 1000ms trước lần thử quyết định',
-            desc: 'Tạm dừng 1000ms để cho User Service thêm cơ hội reboot hoàn tất.',
-            resilience: 'Bảo vệ đối tác không bị quá tải lặp lại.',
+            stepTitle: 'Bước 4/5: Nghỉ 1000ms chờ User Service hồi phục hẳn',
+            badge: 'Đợi hồi phục',
+            action: 'Nghỉ 1000ms trước lần thử thứ 3',
+            desc: 'Hệ thống tạm dừng 1 giây để User Service kịp ổn định trước khi gọi lại.',
+            resilience: 'Khoảng nghỉ hợp lý giúp cứu được yêu cầu mà không làm nặng thêm máy chủ.',
             statusColor: '#f59e0b',
-            code: 'BACKOFF 1000ms'
+            code: 'NGHỈ 1000ms'
           };
         } else if (t < 9600) {
           const p = easeInOut((t - 8400) / 1200);
@@ -664,11 +664,11 @@ export default function FlowVisualizer({
           packetColor = '#22c55e';
           packetLabel = 'Lần 3: Thành công ✅';
           narrative = {
-            stepTitle: 'Bước 5/5: Lần thử 3 — User Service phục hồi & Tự cứu thành công!',
-            badge: 'Tự cứu thành công',
-            action: 'Lần 3 User Service phản hồi 200 OK',
-            desc: 'Sau 1000ms nghỉ, Order Service thử lại lần 3. Lúc này User Service đã hoàn tất reboot và phản hồi dữ liệu khách hàng đầy đủ!',
-            resilience: 'Tự động cứu vãn yêu cầu từ cõi chết trong cùng một phiên làm việc.',
+            stepTitle: 'Bước 5/5: Lần thử 3 — User Service đã khỏe và trả dữ liệu (200 OK)!',
+            badge: 'Thành công ở lần 3',
+            action: 'Lần 3 User Service trả về 200 OK',
+            desc: 'Sau 1000ms nghỉ, Order Service gọi lại lần thứ 3. Lần này User Service đã ổn định và trả về đầy đủ tên, địa chỉ khách hàng!',
+            resilience: 'Tự cứu thành công yêu cầu mà người dùng không cần bấm tải lại trang.',
             statusColor: '#22c55e',
             code: 'LẦN 3: 200 OK'
           };
@@ -676,15 +676,15 @@ export default function FlowVisualizer({
           const p = easeInOut((t - 9600) / 1200);
           packetX = userX - p * (userX - orderX);
           packetColor = '#22c55e';
-          packetLabel = '200 OK (User Data)';
+          packetLabel = '200 OK (Dữ liệu khách)';
           narrative = {
-            stepTitle: 'Thu nạp dữ liệu — Order Service gộp đơn hàng',
-            badge: 'Dữ liệu đầy đủ',
+            stepTitle: 'Nhận dữ liệu — Order Service ghép thông tin đơn hàng',
+            badge: 'Đủ dữ liệu',
             action: 'User Service trả họ tên, địa chỉ về Order Service',
-            desc: 'Order Service nhận dữ liệu khách hàng, gộp với thông tin đơn hàng #001.',
-            resilience: 'Giao dịch được cứu vãn thành công hoàn toàn trong suốt.',
+            desc: 'Order Service nhận được thông tin khách hàng và ghép vào đơn hàng #001.',
+            resilience: 'Giao dịch được xử lý trọn vẹn dù trước đó bị lỗi 2 lần.',
             statusColor: '#22c55e',
-            code: 'GỘP DỮ LIỆU'
+            code: 'GHÉP DỮ LIỆU'
           };
         } else {
           const p = easeInOut((t - 10800) / 1200);
@@ -692,11 +692,11 @@ export default function FlowVisualizer({
           packetColor = '#22c55e';
           packetLabel = 'HTTP 200 OK ✅';
           narrative = {
-            stepTitle: 'Hoàn tất giao dịch — Trả về Client thành công mỹ mãn',
-            badge: 'Client hài lòng',
-            action: 'Trả dữ liệu đơn hàng hoàn chỉnh cho Client',
-            desc: 'Client nhận kết quả hoàn hảo với HTTP 200 OK. Khách hàng hoàn toàn không hề hay biết hệ thống vừa âm thầm vượt qua 2 lần lỗi trước đó!',
-            resilience: 'Độ kiên cường tuyệt đối trước các lỗi rung lắc mạng tạm thời (Transient Faults).',
+            stepTitle: 'Hoàn tất — Trả kết quả thành công về cho khách hàng',
+            badge: 'Khách hàng hài lòng',
+            action: 'Trả đơn hàng đầy đủ kèm HTTP 200 OK',
+            desc: 'Màn hình người dùng nhận kết quả 200 OK bình thường. Khách hàng không hề biết phía sau vừa tự thử lại 3 lần!',
+            resilience: 'Giúp ứng dụng ổn định trước các lỗi mạng thoáng qua.',
             statusColor: '#22c55e',
             code: 'HTTP 200 OK'
           };
@@ -759,43 +759,43 @@ export default function FlowVisualizer({
 
         if (t < 1400) {
           narrative = {
-            stepTitle: 'Bước 1/4: Bão 10 request đồng thời ập đến — KHÔNG CÓ BULKHEAD',
-            badge: 'Bão tải tràn ngập',
-            action: '10 Request ập vào Order Service cùng lúc',
-            desc: '10 khách hàng gửi request cùng một thời điểm. Hệ thống KHÔNG CÓ vách ngăn Bulkhead (Semaphore) để giới hạn.',
-            resilience: 'Cánh cổng hoàn toàn mở toang, không có bất kỳ bộ lọc điều tiết nào.',
+            stepTitle: 'Bước 1/4: 10 người cùng bấm một lúc — KHÔNG CÓ BULKHEAD',
+            badge: 'Bão lưu lượng',
+            action: 'Cả 10 yêu cầu cùng tràn vào Order Service',
+            desc: '10 khách hàng bấm tra cứu cùng một lúc. Vì hệ thống KHÔNG cài vách ngăn giới hạn (Bulkhead), tất cả đều được đẩy thẳng vào xử lý.',
+            resilience: 'Cổng vào mở toang hoàn toàn, không có ai đứng điều tiết bớt tải.',
             statusColor: '#ef4444',
-            code: '10 REQUESTS ẬP VÀO'
+            code: '10 LƯỢT CÙNG VÀO'
           };
         } else if (t < 3600) {
           narrative = {
-            stepTitle: 'Bước 2/4: THẢM HỌA KHÔNG CÓ BULKHEAD — 10/10 Luồng bị chiếm trọn trong 2s',
-            badge: '100% Thread Lock 🚨',
-            action: 'Toàn bộ 10 worker threads của Order Service bị chiếm dụng',
-            desc: 'Không có hạn ngạch 3 suất, cả 10 request tràn ngập vào và cùng lúc ngâm 2 giây tại User Service. 10/10 worker threads của Order Service bị khóa cứng!',
-            resilience: 'NẠN ĐÓI TÀI NGUYÊN (Thread Starvation): Bất kỳ người dùng nào gọi API thanh toán, tạo đơn hay xem giỏ hàng vào lúc này đều bị đứng hình!',
+            stepTitle: 'Bước 2/4: QUÁ TẢI KHI THIẾU BULKHEAD — Chiếm hết 10/10 luồng trong 2 giây',
+            badge: 'Kẹt hết luồng 🚨',
+            action: 'Cả 10 luồng làm việc của Order Service bị chiếm sạch',
+            desc: 'Vì không giới hạn 3 chỗ, cả 10 yêu cầu cùng vào ngồi chờ User Service mất 2 giây. Toàn bộ 10/10 luồng xử lý của máy chủ bị kẹt cứng!',
+            resilience: 'HẬU QUẢ: Trong lúc 10 luồng đang bị kẹt, bất kỳ ai gọi chức năng thanh toán, tạo đơn hay xem giỏ hàng đều bị đứng hình theo!',
             statusColor: '#ef4444',
-            code: '10/10 THREADS CẠN KIỆT'
+            code: '10/10 LUỒNG BỊ KẸT'
           };
         } else if (t < 4800) {
           narrative = {
-            stepTitle: 'Bước 3/4: 10 Lượt xong sau 2 giây nhưng đã gây nghẽn toàn hệ thống',
-            badge: 'Tê liệt cục bộ',
-            action: 'Phản hồi hoàn tất sau khi giữ chết tài nguyên suốt 2s',
-            desc: 'Cả 10 lượt hoàn tất xử lý sau 2.000ms. Dù không có lỗi 429, hệ thống đã phải trả giá bằng việc đứng hình toàn bộ các dịch vụ song song khác.',
-            resilience: 'So sánh: Khi có Bulkhead, hệ thống chỉ cấp 3 suất, dội ngược ngay 7 lượt quá tải trong 1ms (HTTP 429) để bảo vệ 70% tài nguyên còn lại!',
+            stepTitle: 'Bước 3/4: Xử lý xong sau 2 giây nhưng cả hệ thống đã bị đơ trong lúc đó',
+            badge: 'Đơ toàn hệ thống',
+            action: 'Hoàn tất sau khi làm kẹt cứng máy chủ suốt 2 giây',
+            desc: 'Dù cả 10 lượt đều trả về 200 OK sau 2 giây, hệ thống đã phải đánh đổi bằng việc đứng hình toàn bộ các chức năng khác.',
+            resilience: 'So sánh: Khi có Bulkhead, hệ thống chỉ nhận tối đa 3 lượt, còn 7 lượt dư được báo bận ngay trong 1ms (HTTP 429) để giữ lại luồng cho việc khác!',
             statusColor: '#f59e0b',
-            code: 'NẰM CHẾT 2 GIÂY'
+            code: 'ĐƠ MÁY CHỦ 2s'
           };
         } else {
           narrative = {
-            stepTitle: 'Bước 4/4: Rút ra bài học — Bulkhead là vách ngăn sống còn của kiến trúc Microservices',
-            badge: 'Rủi ro sập toàn diện',
-            action: 'Nếu có 50 request thay vì 10, Order Service sẽ sập hoàn toàn (OOM / Thread Starvation)',
-            desc: 'Không có Bulkhead, một API chậm hoặc bị bão tải sẽ kéo sập toàn bộ máy chủ và làm chết lây sang các API khác.',
-            resilience: 'Triết lý Bulkhead: Thà từ chối nhanh một số lượt quá tải (HTTP 429) còn hơn để cả con tàu microservices bị chìm đắm.',
+            stepTitle: 'Bước 4/4: Bài học rút ra — Bulkhead ngăn một lỗi nhỏ làm đơ cả hệ thống',
+            badge: 'Nguy cơ sập máy chủ',
+            action: 'Nếu có 50 người thay vì 10, Order Service sẽ hết sạch luồng và treo hẳn',
+            desc: 'Khi thiếu Bulkhead, chỉ cần một chức năng bị chậm là kéo sập theo toàn bộ máy chủ.',
+            resilience: 'Nguyên tắc Bulkhead: Chấp nhận từ chối bớt người đến sau (HTTP 429) còn hơn để cả con tàu dịch vụ chìm chung.',
             statusColor: '#ef4444',
-            code: 'HIỂM HỌA KHÔNG BULKHEAD'
+            code: 'THIẾU BULKHEAD'
           };
         }
       }
@@ -938,23 +938,23 @@ export default function FlowVisualizer({
           }
           isUserError = true;
           narrative = {
-            stepTitle: 'Bước 1/4: Downstream User Service đã chết 100% — Gửi 5 request liên tiếp',
+            stepTitle: 'Bước 1/4: User Service đang hỏng 100% — Gửi 5 lượt liên tiếp',
             badge: 'Lỗi 100%',
-            action: '5 Lượt đầu tiên đều thất bại với HTTP 500',
-            desc: 'User Service đang bị sập hoàn toàn. 5 request đầu tiên liên tục gửi qua mạng và đều nhận về lỗi HTTP 500.',
-            resilience: 'Tỷ lệ thất bại đã chạm ngưỡng 100% (vượt xa ngưỡng an toàn 50%).',
+            action: '5 lượt đầu tiên đều thất bại với lỗi 500',
+            desc: 'User Service đang bị lỗi hoàn toàn. 5 yêu cầu đầu gửi qua mạng sang đó đều nhận lỗi HTTP 500.',
+            resilience: 'Tỷ lệ lỗi đã đạt 100% (vượt xa ngưỡng 50%).',
             statusColor: '#ef4444',
             code: '5/5 LỖI 100%'
           };
         } else if (t < 4200) {
           narrative = {
-            stepTitle: 'Bước 2/4: THẢM HỌA KHÔNG CÓ CIRCUIT BREAKER — Cầu dao không tồn tại!',
+            stepTitle: 'Bước 2/4: THIẾU CẦU DAO NGẮT MẠCH — Không tự động dừng lại!',
             badge: 'Không có cầu dao',
-            action: 'Mạch không mở OPEN, không có cơ chế ngắt bảo vệ',
-            desc: 'Dù tỷ lệ lỗi đã đạt 100%, do KHÔNG CÓ Circuit Breaker, Order Service không hề biết dừng lại. Mạch vẫn duy trì trạng thái đóng mù quáng!',
-            resilience: 'Hệ thống thiếu hoàn toàn phản xạ sinh tồn (Survival Instinct) khi đối tác gặp nạn.',
+            action: 'Đường gọi vẫn mở, không có cơ chế tự ngắt bảo vệ',
+            desc: 'Dù 5/5 lần đều lỗi, nhưng vì KHÔNG CÓ Circuit Breaker nên Order Service không biết đường dừng lại.',
+            resilience: 'Hệ thống thiếu hoàn toàn cầu dao tự ngắt khi dịch vụ bên kia gặp sự cố.',
             statusColor: '#ef4444',
-            code: 'MẠCH ĐÓNG MÙ QUÁNG'
+            code: 'KHÔNG TỰ NGẮT'
           };
         } else if (t < 5400) {
           const pT = (t - 4200) / 1200;
@@ -970,26 +970,26 @@ export default function FlowVisualizer({
             packetLabel = 'Lượt 6: Vẫn lỗi 500 💥';
           }
           narrative = {
-            stepTitle: 'Bước 3/4: Lượt thứ 6 VẪN MÙ QUÁNG gửi sang đối tác đang chết (0 FAIL-FAST)',
-            badge: '0 Fail-Fast 14ms',
-            action: 'Lượt 6 tiếp tục đi hết chu trình mạng và dội lỗi 500',
-            desc: 'So sánh: Khi có Circuit Breaker, lượt 6 bị chặn đứng ngay trong 14ms (HTTP 503 Fail-Fast, 0 lần gọi User). Nhưng ở đây, lượt 6 vẫn tốn công đi qua mạng, làm nghẽn socket và đè bẹp thêm User Service!',
-            resilience: 'Cascading Overload: Dội bom liên tục vào đối tác đang ngất xỉu khiến nó không bao giờ có cơ hội reboot tự chữa lành.',
+            stepTitle: 'Bước 3/4: Lượt thứ 6 VẪN CỐ gửi sang dịch vụ đang hỏng (không có Fail-Fast)',
+            badge: 'Không chặn nhanh',
+            action: 'Lượt 6 vẫn phải đi hết đường mạng rồi mới nhận lỗi',
+            desc: 'So sánh: Khi có cầu dao, lượt 6 bị chặn luôn tại Order Service trong 14ms (HTTP 503, 0 lần gọi User). Còn ở đây, lượt 6 vẫn gửi qua mạng sang dịch vụ đang hỏng, vừa chậm vừa tạo thêm gánh nặng cho nó!',
+            resilience: 'Quá tải dây chuyền: Liên tục gửi thêm yêu cầu vào dịch vụ đang lỗi khiến nó càng khó hồi phục.',
             statusColor: '#ef4444',
-            code: 'LƯỢT 6: 0 FAIL-FAST'
+            code: 'LƯỢT 6: KHÔNG CHẶN'
           };
         } else {
           packetX = gwX;
           packetColor = '#ef4444';
           packetLabel = '6/6 THẤT BẠI 💥';
           narrative = {
-            stepTitle: 'Bước 4/4: Tổng kết thảm họa — 6/6 lượt đập vào đối tác chết, 0 cơ chế tự phục hồi',
-            badge: 'Đè bẹp đối tác',
-            action: 'Cả 6 lượt đều lãng phí tài nguyên mạng, đối tác bị tê liệt hoàn toàn',
-            desc: 'Không có Circuit Breaker, không có Fail-Fast, không có trạng thái HALF-OPEN và không có tự chữa lành (Self-Healing). Hệ thống phụ thuộc 100% vào việc can thiệp thủ công của kỹ sư vận hành.',
-            resilience: 'Circuit Breaker là cầu dao an toàn sinh tử bảo vệ cả người gọi lẫn người được gọi trong thế giới Microservices.',
+            stepTitle: 'Bước 4/4: Tổng kết — Cả 6 lượt đều gửi qua mạng vào chỗ hỏng',
+            badge: 'Làm nặng thêm lỗi',
+            action: 'Cả 6 lượt đều tốn công gửi qua mạng và thất bại',
+            desc: 'Không có cầu dao ngắt mạch (Circuit Breaker) thì không thể chặn nhanh (Fail-Fast) và cũng không tự kiểm tra để mở lại khi bên kia khỏe (HALF-OPEN).',
+            resilience: 'Circuit Breaker giống như cầu dao điện: tự ngắt khi quá tải/chập mạch để bảo vệ cả hệ thống.',
             statusColor: '#ef4444',
-            code: '6/6 ĐẬP VÀO LỖI'
+            code: '6/6 GỬI VÀO LỖI'
           };
         }
       }
@@ -1434,7 +1434,7 @@ export default function FlowVisualizer({
           <Activity size={16} className={`pulse-icon ${isPlaying ? 'active' : ''}`} />
           <span>
             {isUnprotected
-              ? '⚠️ MÔ PHỎNG THẢM HỌA KHI THIẾU BẢO VỆ (DISASTER BASELINE)'
+              ? '⚠️ MÔ PHỎNG SỰ CỐ KHI KHÔNG CÓ BẢO VỆ'
               : isProbeMode
               ? 'MÔ PHỎNG 2 LƯỢT THĂM DÒ (HALF-OPEN ➔ CLOSED)'
               : 'MÔ PHỎNG CHUYỂN ĐỘNG LIÊN TỤC (60 FPS)'}
@@ -1665,16 +1665,16 @@ export default function FlowVisualizer({
 
                   {scenarioId === 'timeout' && (
                     <>
-                      <text x="85" y="25" textAnchor="middle" fill="#f59e0b" fontSize="12" fontWeight="bold">3 Lượt đo so sánh</text>
-                      <text x="85" y="43" textAnchor="middle" fill="#cbd5e1" fontSize="11" fontWeight="600">1. Trực tiếp: Ngâm 4s (200)</text>
-                      <text x="85" y="58" textAnchor="middle" fill="#fca5a5" fontSize="11" fontWeight="bold">2. Feign Timeout: Cắt 3s</text>
-                      <text x="85" y="73" textAnchor="middle" fill="#f472b6" fontSize="11" fontWeight="bold">3. TimeLimiter: Cắt 1.5s</text>
+                      <text x="85" y="21" textAnchor="middle" fill="#f59e0b" fontSize="11" fontWeight="bold">4 Lượt · 2 Lớp Timeout</text>
+                      <text x="85" y="38" textAnchor="middle" fill="#cbd5e1" fontSize="10" fontWeight="600">1. Không Timeout (Chờ 4s)</text>
+                      <text x="85" y="54" textAnchor="middle" fill="#fca5a5" fontSize="10" fontWeight="bold">Mạng: Feign 3s · Rest 2.5s</text>
+                      <text x="85" y="70" textAnchor="middle" fill="#f472b6" fontSize="10" fontWeight="bold">App: TimeLimiter (1.5s)</text>
                     </>
                   )}
                   {scenarioId === 'retry' && (
                     <>
-                      <text x="85" y="28" textAnchor="middle" fill="#38bdf8" fontSize="13" fontWeight="bold">🔄 Resilience4j Retry</text>
-                      <text x="85" y="48" textAnchor="middle" fill="#cbd5e1" fontSize="11" fontWeight="600">Max 3 lần · Backoff</text>
+                      <text x="85" y="28" textAnchor="middle" fill="#38bdf8" fontSize="12" fontWeight="bold">🔄 Retry (R4j &amp; Spring)</text>
+                      <text x="85" y="48" textAnchor="middle" fill="#cbd5e1" fontSize="11" fontWeight="600">Tối đa 3 lần · Nghỉ tăng dần</text>
                       <text x="85" y="68" textAnchor="middle" fill="#4ade80" fontSize="12" fontWeight="bold">Tự cứu ở lần 3</text>
                     </>
                   )}
