@@ -13,14 +13,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
-import java.util.TreeMap;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /**
  * Các endpoint demo Resilience4j (gọi trực tiếp hoặc qua API Gateway: http://localhost:8080/api/orders/resilience/...)
@@ -109,42 +102,12 @@ public class ResilienceController {
     }
 
     @Operation(summary = "Bắn N request song song (Burst Test)",
-            description = "Tạo n luồng đồng thời gọi vào 1 pattern (timeout | retry | bulkhead | circuit-breaker | combined | combined-nofallback) để kiểm chứng mà không cần tool ngoài.")
+            description = "Tạo n luồng đồng thời gọi vào 1 pattern (feign-timeout | restclient-timeout | timeout | retry | spring-retry | bulkhead | circuit-breaker | converge | no-protection). So sánh Bulkhead (nhận 3 chỗ FIFO, chặn 429 phần thừa) với no-protection (tràn quá tải tập thể 503).")
     @GetMapping("/burst/{pattern}")
     public Map<String, Object> burst(@PathVariable String pattern,
                                      @RequestParam(defaultValue = "10") int n,
                                      @RequestParam(defaultValue = "1") Long userId) {
-        int count = Math.min(Math.max(n, 1), 50);
-        long begin = System.currentTimeMillis();
-        ExecutorService pool = Executors.newFixedThreadPool(count);
-        try {
-            List<CompletableFuture<DemoResult>> futures = new ArrayList<>();
-            for (int i = 0; i < count; i++) {
-                futures.add(CompletableFuture.supplyAsync(() -> service.dispatch(pattern, userId), pool));
-            }
-            Map<String, Integer> summary = new TreeMap<>();
-            List<String> details = new ArrayList<>();
-            List<Map<String, Object>> requestResults = new ArrayList<>();
-            int i = 1;
-            for (CompletableFuture<DemoResult> f : futures) {
-                DemoResult r = f.join();
-                summary.merge(r.outcome(), 1, Integer::sum);
-                requestResults.add(Map.of("number", i, "outcome", r.outcome(), "httpStatus", r.httpStatus(),
-                        "elapsedMs", r.elapsedMs(), "attempts", r.attempts()));
-                details.add("#" + (i++) + " -> " + r.outcome() + " (" + r.elapsedMs() + "ms, "
-                        + r.attempts() + " lần gọi thật)");
-            }
-            Map<String, Object> out = new LinkedHashMap<>();
-            out.put("pattern", pattern);
-            out.put("parallelRequests", count);
-            out.put("totalMs", System.currentTimeMillis() - begin);
-            out.put("summary", summary);
-            out.put("details", details);
-            out.put("requestResults", requestResults);
-            return out;
-        } finally {
-            pool.shutdown();
-        }
+        return service.burst(pattern, n, userId);
     }
 
     @Operation(summary = "Xem trạng thái & số liệu Resilience4j",

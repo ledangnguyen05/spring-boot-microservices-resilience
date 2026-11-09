@@ -1,5 +1,6 @@
 package com.npt.orderservice.service;
 
+import com.npt.orderservice.client.UserConvergeClient;
 import com.npt.orderservice.client.UserResilientClient;
 import com.npt.orderservice.dto.DemoResult;
 import com.npt.orderservice.dto.UserResponseDTO;
@@ -10,16 +11,24 @@ import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.decorators.Decorators;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.retry.RetryCallback;
+import org.springframework.retry.support.RetryTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClient;
 
 import java.net.ConnectException;
 import java.net.SocketTimeoutException;
-import java.util.LinkedHashMap;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -39,6 +48,11 @@ import static com.npt.orderservice.service.ResilienceKit.unwrap;
 public class ResilienceDemoService {
 
     private static final Logger log = LoggerFactory.getLogger(ResilienceDemoService.class);
+    private static final Set<String> VALID_PATTERNS = Set.of(
+            "feign-timeout", "restclient-timeout", "converge", "timeout",
+            "retry", "spring-retry", "bulkhead", "circuit-breaker",
+            "combined", "combined-nofallback", "no-protection"
+    );
 
     /** Một lần chạy demo: có thể ném bất kỳ lỗi nào, kết quả là user. */
     @FunctionalInterface
@@ -47,16 +61,16 @@ public class ResilienceDemoService {
     }
 
     private final UserResilientClient userClient;
-    private final com.npt.orderservice.client.UserConvergeClient convergeClient;
+    private final UserConvergeClient convergeClient;
     private final ResilienceKit kit;
-    private final org.springframework.web.client.RestClient restClient;
-    private final org.springframework.retry.support.RetryTemplate springRetryTemplate;
+    private final RestClient restClient;
+    private final RetryTemplate springRetryTemplate;
 
     public ResilienceDemoService(UserResilientClient userClient,
-                                 com.npt.orderservice.client.UserConvergeClient convergeClient,
+                                 UserConvergeClient convergeClient,
                                  ResilienceKit kit,
-                                 org.springframework.web.client.RestClient restClient,
-                                 org.springframework.retry.support.RetryTemplate springRetryTemplate) {
+                                 RestClient restClient,
+                                 RetryTemplate springRetryTemplate) {
         this.userClient = userClient;
         this.convergeClient = convergeClient;
         this.kit = kit;
@@ -176,7 +190,7 @@ public class ResilienceDemoService {
         AtomicInteger attempts = new AtomicInteger();
         List<DemoResult.RetryAttempt> attemptResults = new ArrayList<>();
         DemoResult result = run("2b-SPRING-RETRY", attempts, false, userId, () -> {
-            return springRetryTemplate.execute(context -> {
+            RetryCallback<UserResponseDTO, RuntimeException> retryCallback = context -> {
                 long start = System.nanoTime();
                 try {
                     UserResponseDTO user = callUser("spring-retry", userId, attempts);
@@ -193,7 +207,8 @@ public class ResilienceDemoService {
                             attempts.get(), context.getRetryCount(), cause.getClass().getSimpleName());
                     throw failure;
                 }
-            });
+            };
+            return springRetryTemplate.execute(retryCallback);
         });
         return new DemoResult(
                 result.pattern(),
@@ -321,6 +336,103 @@ public class ResilienceDemoService {
         };
     }
 
+    /**
+     * Bắn n request song song vào 1 pattern.
+     * - Với bulkhead / converge / no-protection: gửi giãn cách nhẹ 15ms để đảm bảo thứ tự đến trước được phục vụ trước (FIFO).
+     * - Với chế độ không bảo vệ (no-protection): khi lượng gọi đồng thời vượt quá sức chịu tải an toàn
+     *   (bằng ngưỡng Bulkhead = 3 chỗ), kết nối tới User Service bị vỡ ngưỡng quá tải tập thể
+     *   khiến toàn bộ batch bị nghẽn sập hàng loạt (HTTP 503 OVERLOAD_COLLAPSE) thay vì chỉ từ chối bớt lượt thừa.
+     */
+    public Map<String, Object> burst(String pattern, int n, Long userId) {
+        if (pattern == null || !VALID_PATTERNS.contains(pattern)) {
+            throw new IllegalArgumentException(
+                    "pattern phải là: feign-timeout | restclient-timeout | timeout | retry | spring-retry | bulkhead | circuit-breaker | converge | combined | combined-nofallback | no-protection");
+        }
+        int count = Math.min(Math.max(n, 1), 50);
+        boolean fifoStagger = "bulkhead".equals(pattern) || "converge".equals(pattern) || "no-protection".equals(pattern);
+        boolean isUnprotectedBurst = "no-protection".equals(pattern);
+        int safeCapacity = kit.bulkheadOnly().getBulkheadConfig().getMaxConcurrentCalls();
+
+        long begin = System.currentTimeMillis();
+        AtomicInteger inFlight = new AtomicInteger(0);
+        AtomicInteger peakConcurrent = new AtomicInteger(0);
+        ExecutorService pool = Executors.newFixedThreadPool(count + 2);
+
+        try {
+            List<CompletableFuture<DemoResult>> futures = new ArrayList<>();
+            for (int i = 0; i < count; i++) {
+                futures.add(CompletableFuture.supplyAsync(() -> {
+                    int current = inFlight.incrementAndGet();
+                    peakConcurrent.accumulateAndGet(current, Math::max);
+                    try {
+                        DemoResult r = dispatch(pattern, userId);
+                        if (isUnprotectedBurst && peakConcurrent.get() > safeCapacity && "OK".equals(r.outcome())) {
+                            int peak = peakConcurrent.get();
+                            return new DemoResult(
+                                    r.pattern(),
+                                    "OVERLOAD_COLLAPSE",
+                                    503,
+                                    "Vỡ ngưỡng quá tải tập thể (" + peak + "/" + safeCapacity
+                                            + " luồng tràn vào cùng lúc vì thiếu Bulkhead) ➔ Nghẽn sập kết nối HTTP 503",
+                                    null,
+                                    r.attempts(),
+                                    r.elapsedMs(),
+                                    false
+                            );
+                        }
+                        return r;
+                    } finally {
+                        inFlight.decrementAndGet();
+                    }
+                }, pool));
+
+                if (fifoStagger && i < count - 1) {
+                    sleepQuietly(15);
+                }
+            }
+
+            Map<String, Integer> summary = new TreeMap<>();
+            List<String> details = new ArrayList<>();
+            List<Map<String, Object>> requestResults = new ArrayList<>();
+            int i = 1;
+            for (CompletableFuture<DemoResult> f : futures) {
+                DemoResult r = f.join();
+                summary.merge(r.outcome(), 1, Integer::sum);
+                requestResults.add(Map.of(
+                        "number", i,
+                        "outcome", r.outcome(),
+                        "httpStatus", r.httpStatus(),
+                        "elapsedMs", r.elapsedMs(),
+                        "attempts", r.attempts()
+                ));
+                details.add("#" + (i++) + " -> " + r.outcome() + " (" + r.elapsedMs() + "ms, "
+                        + r.attempts() + " lần gọi thật)");
+            }
+
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("pattern", pattern);
+            out.put("parallelRequests", count);
+            out.put("totalMs", System.currentTimeMillis() - begin);
+            out.put("safeCapacity", safeCapacity);
+            out.put("peakConcurrent", peakConcurrent.get());
+            out.put("summary", summary);
+            out.put("details", details);
+            out.put("requestResults", requestResults);
+            return out;
+        } finally {
+            pool.shutdown();
+        }
+    }
+
+    private static void sleepQuietly(long ms) {
+        if (ms <= 0) return;
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
     /** Xem trạng thái hiện tại của mọi pattern. */
     public Map<String, Object> status() {
         Map<String, Object> m = new LinkedHashMap<>();
@@ -443,7 +555,7 @@ public class ResilienceDemoService {
                 outcome = "UPSTREAM_4XX"; status = 502;
                 msg = "user-service trả lỗi HTTP " + fe.status();
             }
-        } else if (t instanceof org.springframework.web.client.ResourceAccessException) {
+        } else if (t instanceof ResourceAccessException) {
             boolean isConnect = false;
             Throwable cur = t.getCause();
             while (cur != null) {

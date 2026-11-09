@@ -1,5 +1,8 @@
 package com.npt.orderservice.service;
 
+import com.npt.orderservice.client.UserConvergeClient;
+import com.npt.orderservice.client.UserResilientClient;
+import com.npt.orderservice.dto.UserResponseDTO;
 import feign.FeignException;
 import feign.Request;
 import feign.RequestTemplate;
@@ -10,9 +13,13 @@ import io.github.resilience4j.decorators.Decorators;
 import io.github.resilience4j.retry.Retry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.retry.support.RetryTemplate;
+import org.springframework.web.client.RestClient;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
@@ -64,16 +71,22 @@ class ResiliencePatternsTest {
     @DisplayName("Bulkhead từ chối lời gọi thứ 4 khi số lời gọi đồng thời tối đa là 3")
     void testBulkheadLimitsConcurrentCalls() {
         Bulkhead bh = kit.bulkheadOnly();
-        assertTrue(bh.tryAcquirePermission(), "Call 1 cho phép");
-        assertTrue(bh.tryAcquirePermission(), "Call 2 cho phép");
-        assertTrue(bh.tryAcquirePermission(), "Call 3 cho phép");
+        try {
+            assertTrue(bh.tryAcquirePermission(), "Call 1 cho phép");
+            assertTrue(bh.tryAcquirePermission(), "Call 2 cho phép");
+            assertTrue(bh.tryAcquirePermission(), "Call 3 cho phép");
 
-        // Call 4 phải bị từ chối
-        assertFalse(bh.tryAcquirePermission(), "Call 4 phải bị từ chối vì quá tải");
+            // Call 4 phải bị từ chối
+            assertFalse(bh.tryAcquirePermission(), "Call 4 phải bị từ chối vì quá tải");
 
-        // Giải phóng 1 slot
-        bh.onComplete();
-        assertTrue(bh.tryAcquirePermission(), "Sau khi nhả slot, call tiếp theo được phép");
+            // Giải phóng 1 slot
+            bh.onComplete();
+            assertTrue(bh.tryAcquirePermission(), "Sau khi nhả slot, call tiếp theo được phép");
+        } finally {
+            while (bh.getMetrics().getAvailableConcurrentCalls() < 3) {
+                bh.onComplete();
+            }
+        }
     }
 
     @Test
@@ -201,6 +214,65 @@ class ResiliencePatternsTest {
         // Gọi lại ngay: fail-fast, không đụng tới lời gọi thật.
         assertThrows(CallNotPermittedException.class, pipeline::get);
         assertEquals(1, realCalls.get(), "Mạch OPEN thì không có thêm lời gọi thật nào");
+    }
+
+    @Test
+    @DisplayName("Không Bulkhead vỡ ngưỡng quá tải tập thể (0/10 sống · sập 10× 503), còn có Bulkhead giữ sống 3/3 (FIFO) và chặn nhanh 7× 429")
+    @SuppressWarnings("unchecked")
+    void testBulkheadSurvivesOverloadWhileUnprotectedCollapses() {
+        UserResilientClient slowUserClient = id -> {
+            try {
+                Thread.sleep(650);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException(e);
+            }
+            return new UserResponseDTO(id, "Nguyễn Văn A", "Q1, TP.HCM");
+        };
+        UserConvergeClient dummyConvergeClient = id -> new UserResponseDTO(id, "A", "B");
+
+        ResilienceDemoService demoService = new ResilienceDemoService(
+                slowUserClient,
+                dummyConvergeClient,
+                kit,
+                RestClient.create(),
+                new RetryTemplate()
+        );
+
+        // 0) Vừa sức (n=3 <= safeCapacity=3): không bảo vệ vẫn chạy bình thường
+        Map<String, Object> withinCap = demoService.burst("no-protection", 3, 1L);
+        Map<String, Integer> withinCapSummary = (Map<String, Integer>) withinCap.get("summary");
+        assertEquals(3, withinCapSummary.getOrDefault("OK", 0), "Khi lượng gọi nằm trong ngưỡng an toàn 3 luồng, no-protection vẫn xử lý được 3/3");
+
+        // 1) QUÁ TẢI KHÔNG BULKHEAD (n=10 > safeCapacity=3): tràn cả 10/10 cùng lúc -> vỡ ngưỡng quá tải tập thể -> 0/10 thành công (10× 503)
+        Map<String, Object> unprotected = demoService.burst("no-protection", 10, 1L);
+        Map<String, Integer> unprotectedSummary = (Map<String, Integer>) unprotected.get("summary");
+        assertEquals(0, unprotectedSummary.getOrDefault("OK", 0), "Không có Bulkhead tràn 10/3 luồng -> không lượt nào thoát khỏi nghẽn sập");
+        assertEquals(10, unprotectedSummary.getOrDefault("OVERLOAD_COLLAPSE", 0), "Cả 10/10 lượt phải sập OVERLOAD_COLLAPSE (HTTP 503)");
+        assertEquals(10, unprotected.get("peakConcurrent"));
+
+        List<Map<String, Object>> unprotectedRows = (List<Map<String, Object>>) unprotected.get("requestResults");
+        for (Map<String, Object> row : unprotectedRows) {
+            assertEquals(503, row.get("httpStatus"));
+            assertEquals(1, row.get("attempts"), "Cả 10 lượt đều tràn thật sang User Service trước khi sập");
+        }
+
+        // 2) CÓ BULKHEAD (tối đa 3 chỗ): #1-#3 vào (FIFO) và sống 200 OK, #4-#10 bị 429 tức thì (0 lần gọi User)
+        Map<String, Object> protectedRes = demoService.burst("bulkhead", 10, 1L);
+        Map<String, Integer> protectedSummary = (Map<String, Integer>) protectedRes.get("summary");
+        assertEquals(3, protectedSummary.getOrDefault("OK", 0), "Bulkhead chỉ nhận đúng 3 lượt vừa sức nên cả 3 đều sống 200 OK");
+        assertEquals(7, protectedSummary.getOrDefault("BULKHEAD_FULL", 0), "7 lượt thừa bị từ chối nhanh HTTP 429");
+
+        List<Map<String, Object>> reqRows = (List<Map<String, Object>>) protectedRes.get("requestResults");
+        for (int idx = 0; idx < 3; idx++) {
+            assertEquals("OK", reqRows.get(idx).get("outcome"), "Lượt đến trước #" + (idx + 1) + " phải được nhận (FIFO)");
+            assertEquals(200, reqRows.get(idx).get("httpStatus"));
+        }
+        for (int idx = 3; idx < 10; idx++) {
+            assertEquals("BULKHEAD_FULL", reqRows.get(idx).get("outcome"), "Lượt đến sau #" + (idx + 1) + " phải nhận 429");
+            assertEquals(429, reqRows.get(idx).get("httpStatus"));
+            assertEquals(0, reqRows.get(idx).get("attempts"), "Lượt bị Bulkhead chặn không chạm tới User Service");
+        }
     }
 }
 

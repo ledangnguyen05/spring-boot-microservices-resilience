@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState } from 'react';
-import { Activity, AlertTriangle, Clock3, FileJson, ListChecks, ShieldCheck, Table2, Zap } from 'lucide-react';
+import { Activity, AlertTriangle, Clock3, FileJson, ListChecks, Table2, Zap } from 'lucide-react';
 import { lessons, comparisons } from './demoLessons.js';
 
 const number = new Intl.NumberFormat('vi-VN');
@@ -12,7 +12,8 @@ const outcomeLabels = {
   UPSTREAM_DOWN: 'User Service mất kết nối (Tắt server)',
   UPSTREAM_5XX: 'User Service báo lỗi 5xx',
   UPSTREAM_4XX: 'User Service từ chối yêu cầu 4xx',
-  BULKHEAD_FULL: 'Hết chỗ xử lý (Quá tải)',
+  BULKHEAD_FULL: 'Hết chỗ xử lý (Chặn 429)',
+  OVERLOAD_COLLAPSE: 'Sập quá tải tập thể (Vỡ ngưỡng 3 chỗ)',
   CIRCUIT_OPEN: 'Cầu dao đang ngắt (Chặn luôn)',
   FALLBACK: 'Dùng dữ liệu tạm thay thế (Fallback)',
 };
@@ -23,7 +24,6 @@ const runLabels = {
     '3. Tầng kết nối RestClient (Ví dụ đặt hạn 2.5s · Hết giờ cắt)',
     '4. Tầng nghiệp vụ TimeLimiter (Ví dụ đặt hạn 1.5s · Hết giờ cắt)'
   ],
-  fallback: ['Khi TẮT dữ liệu dự phòng (Trả thẳng lỗi 500)', 'Khi BẬT dữ liệu dự phòng (Trả dữ liệu tạm HTTP 200)'],
 };
 
 export function TimeoutClock({ clock }) {
@@ -79,14 +79,14 @@ function CallDetails({ rows, retry, customTitle }) {
   </div>;
 }
 
-function ConvergeTable({ result }) {
+function ConvergeTable({ result, activeCallIndex = null }) {
   const list = Array.isArray(result) ? result : [];
-  return <div className="table-frame" tabIndex={0} role="region" aria-label="Bảng kịch bản hội tụ 4 topic">
+  return <div className="table-frame" tabIndex={0} role="region" aria-label="Bảng diễn biến 1 đường ống 4 trạm qua 5 chặng">
     <table className="result-table">
-      <caption>Kịch bản hội tụ · {list.length}/5 pha (Từ lúc bình thường ➔ gặp lỗi ➔ tự phục hồi)</caption>
+      <caption>Diễn biến 1 đường ống 4 trạm (Trạm 1 Retry ➔ Trạm 2 CB [5 ô] ➔ Trạm 3 Bulkhead [3 chỗ] ➔ Trạm 4 Feign 1s) · {list.length}/5 chặng</caption>
       <thead><tr>
-        <th scope="col">Pha</th><th scope="col">Cơ chế tham gia</th><th scope="col">HTTP</th>
-        <th scope="col">Kết quả & Ý nghĩa</th><th scope="col">Thời gian</th><th scope="col">Số lần gọi User</th>
+        <th scope="col">Chặng / Diễn biến</th><th scope="col">Trạm chủ công & Kỳ vọng</th><th scope="col">HTTP</th>
+        <th scope="col">Kết quả & Chuyển tiếp cửa sổ CB</th><th scope="col">Thời gian</th><th scope="col">Số lần gọi User</th>
       </tr></thead>
       <tbody>{list.map((item, index) => {
         const { body = {}, status, measuredMs, phase = {} } = item || {};
@@ -97,7 +97,9 @@ function ConvergeTable({ result }) {
         const calls = burst ? (body?.requestResults ?? []).reduce((sum, req) => sum + (req?.attempts ?? 0), 0) : body?.attempts;
         const isOk = status === 200;
         const isFailFast = status === 503 && body?.attempts === 0;
-        return <tr key={index}>
+        const probeCalls = body?.probeCalls ?? 2;
+        const isHighlightedRow = activeCallIndex === index;
+        return <tr key={index} className={isHighlightedRow ? 'active-step-row' : undefined}>
           <th scope="row">
             {phase.title}
             <small style={{ display: 'block', color: isOk ? '#207833' : isFailFast ? '#a05800' : '#883a34', fontWeight: 600, marginTop: '2px' }}>
@@ -112,12 +114,12 @@ function ConvergeTable({ result }) {
           </td>
           <td>
             <strong>{outcome}</strong>
-            <small style={{ display: 'block', color: '#555273', marginTop: '2px', lineHeight: 1.4 }}>
-              {index === 0 && '✔ Lọc bớt người vào: nhận đúng 3 lượt, 3 lượt thừa báo bận (429) ngay.'}
-              {index === 1 && '✔ Tự thử lại: 2 lần đầu lỗi 500, lần 3 thành công 200 OK.'}
-              {index === 2 && '⚠ Cắt treo & Bung cầu dao: User Service treo 3s, Timeout cắt sau 1s, cầu dao chuyển OPEN.'}
-              {index === 3 && '🛡️ Chặn nhanh (Fail-fast): trả 503 ngay sau vài ms (0 lần gọi User), Retry cũng tự dừng.'}
-              {index === 4 && '✔ Tự mở thông mạch lại: User Service khỏe lại, thăm dò 200 OK thành công, đóng cầu dao về CLOSED.'}
+            <small style={{ display: 'block', color: '#555273', marginTop: '2px', lineHeight: 1.45 }}>
+              {index === 0 && '✔ Chặng 1 (Qua cả 4 trạm): Trạm 3 giữ #1–#3 qua Trạm 4 (200 OK) nạp 3 ô xanh [✓][✓][✓] vào Trạm 2; chặn nhanh #4–#6 (429 — Retry/CB bỏ qua).'}
+              {index === 1 && '✔ Chặng 2 (CB 40% < 50%): Gặp 2 lỗi 500 ➔ Trạm 2 thành [✓][✓][✓][✕][✕] = 40% (VẪN CLOSED) ➔ Trạm 1 thử lại #3 200 OK (cửa sổ trượt thành [✓][✓][✕][✕][✓]).'}
+              {index === 2 && '⚠ Chặng 3 (CB vọt 60% ➔ OPEN): User treo 3s, Trạm 4 cắt tại 1s ➔ Trạm 2 trượt thành [✓][✕][✕][✓][✕] = 60% BUNG OPEN ➔ Retry #2 chạm OPEN bị chặn 503 ngay (chỉ 1 lượt User).'}
+              {index === 3 && '🛡️ Chặng 4 (Trạm 2 khóa cửa): Lượt mới vừa qua Trạm 1 liền bị Trạm 2 chặn 503 chỉ trong ~10ms (0 lượt User); Trạm 3, Trạm 4 và Retry dừng hẳn.'}
+              {index === 4 && `✔ Chặng 5 (Xuyên cả 4 trạm ➔ CLOSED): User khỏe lại, hết 3s OPEN ➔ Trạm 2 hé HALF-OPEN ➔ gửi ${probeCalls}/${probeCalls} thăm dò xuyên Trạm 1–4 200 OK ➔ đóng CLOSED 🟢.`}
             </small>
           </td>
           <td className="numeric">{milliseconds(measuredMs)}</td>
@@ -128,8 +130,8 @@ function ConvergeTable({ result }) {
   </div>;
 }
 
-function ResultTable({ scenario, result }) {
-  if (scenario === 'converge') return <ConvergeTable result={result} />;
+function ResultTable({ scenario, result, activeCallIndex = null }) {
+  if (scenario === 'converge') return <ConvergeTable result={result} activeCallIndex={activeCallIndex} />;
 
   if (scenario === 'normal') {
     const { body = {}, status } = result || {};
@@ -155,25 +157,30 @@ function ResultTable({ scenario, result }) {
   }
 
   if (scenario === 'bulkhead') {
-    const { body = {}, status, _stagedResults } = result || {};
+    const { body = {}, _stagedResults } = result || {};
     const displayResults = _stagedResults || body.requestResults || [];
-    return <><div className="table-frame" tabIndex={0} role="region" aria-label="Bảng tổng hợp Bulkhead">
-      <table className="result-table">
-        <caption>{body.parallelRequests ?? 0} lượt gửi cùng lúc · HTTP {status} · {milliseconds(body.totalMs)}</caption>
-        <thead><tr><th scope="col">Kết quả từng lượt</th><th scope="col">Mã kết quả</th><th scope="col">Số lượt</th></tr></thead>
-        <tbody>{Object.entries(body.summary || {}).map(([outcome, count]) => (
-          <tr key={outcome}><th scope="row">{outcomeLabels[outcome] ?? outcome}</th><td><code>{outcome}</code></td><td className="numeric">{count}</td></tr>
-        ))}</tbody>
-      </table>
-    </div>
+    const safeCap = body.safeCapacity ?? 3;
+    const peak = body.peakConcurrent ?? safeCap;
+    return <>
+      <div className="table-frame call-details" tabIndex={0} role="region" aria-label="Bảng tổng hợp Bulkhead">
+        <table className="result-table">
+          <caption>
+            {body.parallelRequests ?? 0} lượt cùng lúc · Sức chứa Bulkhead: {safeCap} chỗ (Đỉnh gọi User đồng thời: {peak}/{safeCap}) · Tổng {milliseconds(body.totalMs)}
+          </caption>
+          <thead><tr><th scope="col">Kết quả tổng hợp</th><th scope="col">Mã kết quả</th><th scope="col">Số lượt</th></tr></thead>
+          <tbody>{Object.entries(body.summary || {}).map(([outcome, count]) => (
+            <tr key={outcome}><th scope="row">{outcomeLabels[outcome] ?? outcome}</th><td><code>{outcome}</code></td><td className="numeric">{count}</td></tr>
+          ))}</tbody>
+        </table>
+      </div>
       {displayResults.length > 0
-        ? <CallDetails rows={displayResults} />
+        ? <CallDetails rows={displayResults} customTitle={`Chi tiết ${displayResults.length} lượt gọi (Bulkhead giữ đúng 3 suất đầu #1–#3)`} />
         : <p className="note">Cần khởi động lại Order Service với bản mới để xem từng lượt.</p>}
     </>;
   }
 
   const responses = Array.isArray(result) ? result : [result];
-  const showCustomer = scenario === 'retry' || scenario === 'fallback';
+  const showCustomer = scenario === 'retry';
   const stagedAttempts = result?._stagedAttempts || (Array.isArray(result) ? result[0]?.body?.attemptResults : result?.body?.attemptResults);
   const showSummaryRow = result?._stagedSummary !== false;
 
@@ -216,8 +223,8 @@ function ResultTable({ scenario, result }) {
                   </small>
                 );
               } else if (scenario === 'breaker') {
-                if (index < 5) rowLabel = `Lượt ${index + 1}/6 (Mạch đang đóng CLOSED)`;
-                else if (index === 5) rowLabel = `Lượt 6/6 (Cầu dao NGẮT · Trả lỗi ngay trong ${measuredMs ?? 14}ms)`;
+                if (index < 5) rowLabel = `Lượt ${index + 1}/6 (Mạch CLOSED · Mẫu ${index + 1}/5)`;
+                else if (index === 5) rowLabel = `Lượt 6/6 (Cầu dao NGẮT · Trả lỗi tức thì)`;
                 else if (index === 6) rowLabel = `Thăm dò 1/2 (Mạch đang mở hé HALF-OPEN)`;
                 else if (index === 7) rowLabel = `Thăm dò 2/2 (Đủ 2 lượt tốt ➔ Đóng mạch lại CLOSED 🟢)`;
                 else rowLabel = `Thăm dò ${index - 5}`;
@@ -225,8 +232,9 @@ function ResultTable({ scenario, result }) {
                 rowLabel = `Lượt ${index + 1}`;
               }
             }
+            const isHighlightedRow = scenario === 'breaker' && activeCallIndex === index;
             return (
-              <tr key={index}>
+              <tr key={index} className={isHighlightedRow ? 'active-step-row' : undefined}>
                 <th scope="row">
                   {rowLabel}
                   {retrySubNote}
@@ -324,11 +332,10 @@ function summarize(scenario, result, breaker) {
   }
 
   if (scenario === 'bulkhead') {
-    const { parallelRequests = 0, summary = {} } = result?.body || {};
+    const { parallelRequests = 0, summary = {}, safeCapacity = 3 } = result?.body || {};
     const succeeded = summary.OK ?? 0;
     const rejected = summary.BULKHEAD_FULL ?? 0;
-    const other = parallelRequests - succeeded - rejected;
-    return `Trong ${parallelRequests} khách cùng gửi yêu cầu một lúc: hệ thống chỉ cho tối đa ${succeeded} người làm trước để giữ ổn định, còn ${rejected} người đến sau được báo bận (HTTP 429) ngay lập tức thay vì làm đơ toàn bộ máy chủ.${other > 0 ? ` Có ${other} lượt trả kết quả khác.` : ''}`;
+    return `Trong ${parallelRequests} lượt gọi cùng lúc (ngưỡng chịu tải ${safeCapacity} chỗ): Bulkhead giữ đúng ${succeeded} lượt đến trước (#1–#${succeeded} = 200 OK) và chặn nhanh ${rejected} lượt thừa bằng HTTP 429 (~5ms, 0 lần gọi User) — giúp hệ thống đứng vững thay vì sập tập thể 10/10.`;
   }
 
   if (scenario === 'breaker') {
@@ -350,23 +357,18 @@ function summarize(scenario, result, breaker) {
 
   if (scenario === 'converge') {
     const list = Array.isArray(result) ? result : [];
-    if (list.length < 4) return 'Kịch bản đang chạy qua từng bước. Vui lòng chờ hoàn tất…';
+    if (list.length < 4) return 'Đường ống 4 trạm đang chạy qua từng chặng. Vui lòng chờ hoàn tất…';
     const [bulk, retry, hang, open, heal] = list;
     const counts = bulk?.body?.summary ?? {};
-    let text = `Trọn vẹn 5 bước kết hợp: (1) Bulkhead giữ nhịp chỉ nhận ${counts.OK ?? 0} và chặn bớt ${counts.BULKHEAD_FULL ?? 0} lượt thừa; (2) Retry tự thử lại 3 lần cứu lỗi chập chờn; (3) Timeout ngắt cuộc gọi bị treo và cầu dao tự bung OPEN; (4) Chặn ngay các lượt sau trong ${open?.measuredMs ?? 14}ms để bảo vệ máy chủ.`;
+    const probes = heal?.body?.probeCalls ?? 2;
+    let text = `Hoàn tất cả 5 chặng trên CÙNG 1 đường ống 4 trạm: (1) Trạm 3 Bulkhead giữ ${counts.OK ?? 0} lượt vào qua Trạm 4 (nạp 3 ô xanh CB) & chặn ${counts.BULKHEAD_FULL ?? 0} lượt thừa (429); (2) Khi CB mới ở 40% (< 50%), Trạm 1 Retry tự cứu thành công ở lần #3; (3) Trạm 4 Feign cắt treo ở 1s đẩy CB vọt 60% BUNG OPEN; (4) Mạch OPEN chặn ngay lượt mới ở Trạm 2 trong ${milliseconds(open?.measuredMs ?? 12)} (503, 0 lần gọi User).`;
     if (heal) {
-      text += ` (5) Khi User Service khỏe lại, hệ thống tự thăm dò và phục hồi bình thường (HTTP 200 OK).`;
+      text += ` (5) User khỏe lại, hết 3s OPEN ➔ Trạm 2 mở hé HALF-OPEN gửi ${probes}/${probes} thăm dò xuyên 4 trạm 200 OK ➔ đóng về ${breaker ?? 'CLOSED'} 🟢.`;
     }
     return text;
   }
 
-  const list = Array.isArray(result) ? result : [result];
-  const [off, on] = list;
-  if (!on) return 'Đã có kết quả khi TẮT dự phòng. Đang chạy tiếp trường hợp BẬT dự phòng…';
-  if (off?.status >= 400 && on?.body?.outcome === 'FALLBACK' && on?.body?.user) {
-    return `Khi TẮT dữ liệu dự phòng, người dùng nhận trang báo lỗi HTTP ${off.status}. Khi BẬT dự phòng, app vẫn trả về thông tin tạm “${on.body.user.name}” để màn hình không bị lỗi trắng.`;
-  }
-  return `Khi tắt dự phòng: ${off?.body?.outcome}. Khi bật dự phòng: ${on?.body?.outcome}.`;
+  return '';
 }
 
 function describeProcess(scenario, result, breaker) {
@@ -406,11 +408,16 @@ function describeProcess(scenario, result, breaker) {
         'Ở lần thứ 3, User Service đã khỏe lại và trả dữ liệu thành công (200 OK). Tổng thời gian ~1.520–1.540ms (gồm ~20ms mạng + 1.500ms nghỉ backoff + vài ms sai số lịch trình hệ điều hành).',
       ];
     }
-    case 'bulkhead':
+    case 'bulkhead': {
+      const safeCap = result?.body?.safeCapacity ?? 3;
+      const okCount = result?.body?.summary?.OK ?? safeCap;
+      const rejCount = result?.body?.summary?.BULKHEAD_FULL ?? 7;
       return [
-        'Gửi 10 yêu cầu ập đến cùng một lúc (mỗi yêu cầu mất 2 giây xử lý).',
-        'Bulkhead tạo ra đúng 3 "chỗ trống" (slot). 3 người vào trước lấy được chỗ để xử lý; 7 người đến sau thấy hết chỗ liền nhận thông báo bận (HTTP 429) ngay trong vài mili-giây, giúp máy chủ không bị treo đơ toàn bộ.',
+        `Sức chịu tải an toàn của nhánh gọi User Service là ${safeCap} luồng đồng thời (tương ứng Bulkhead maxConcurrentCalls = ${safeCap}).`,
+        `Khi 10 lượt chậm (2s) ập đến cùng lúc: Bulkhead chỉ cho phép đúng ${okCount} lượt đầu (#1–#${okCount}) đi qua — tất cả đều hoàn tất 200 OK vì nằm trong ngưỡng an toàn.`,
+        `${rejCount} lượt thừa (#${okCount + 1}–#10) bị báo bận ngay HTTP 429 trong ~5ms (0 lần gọi User), vừa tránh sập dây chuyền vừa giữ trống tài nguyên cho phần còn lại của máy chủ Order Service.`,
       ];
+    }
     case 'breaker': {
       const list = Array.isArray(result) ? result : (result ? [result] : []);
       const blocked = list.findIndex((item) => item?.body?.outcome === 'CIRCUIT_OPEN' && item?.body?.attempts === 0);
@@ -428,22 +435,15 @@ function describeProcess(scenario, result, breaker) {
     case 'converge': {
       const list = Array.isArray(result) ? result : [];
       if (list.length < 4) return [];
+      const heal = list[4];
+      const probes = heal?.body?.probeCalls ?? 2;
       return [
-        'Pha 1 · Lọc bớt tải (Bulkhead): Có 6 lượt đến cùng lúc nhưng chỉ cho phép 3 lượt làm cùng lúc. 3 lượt thừa bị từ chối ngay (429) để giữ máy chủ không bị kẹt.',
-        'Pha 2 · Tự thử lại (Retry): Gặp lỗi nhỏ 2 lần đầu, hệ thống tự thử lại lần 3 và lấy được dữ liệu (200 OK).',
-        'Pha 3 · Cắt treo & Ngắt cầu dao (Timeout + Circuit Breaker): Khi User Service bị treo 3 giây, Timeout ngắt sau 1 giây để không chờ mãi, đồng thời cầu dao nhận thấy lỗi nhiều nên ngắt mạch (OPEN).',
-        'Pha 4 · Từ chối nhanh khi đối tác đang sập (Fail-Fast): Lúc mạch đã mở OPEN, lượt gọi mới bị chặn ngay trong ~14ms (HTTP 503, 0 lần gọi qua mạng). Retry cũng tự dừng lại chứ không cố thử lại vô ích.',
-        list[4] ? 'Pha 5 · Tự hồi phục (Self-Healing): Khi User Service hoạt động trở lại, hệ thống tự gửi 1 lượt dò đường thành công (200 OK) và mở thông mạch trở lại.' : '',
+        'Chặng 1 (Trạm 3 lọc tải ➔ Nạp 3 ô CB): 6 lượt cùng đi qua Trạm 1–2 tới Trạm 3. Bulkhead giữ 3 suất đầu qua Trạm 4 (200 OK) làm đầy 3 ô xanh [✓][✓][✓] của CB và chặn 3 lượt thừa (429 — Retry & CB đều bỏ qua).',
+        'Chặng 2 (CB 40% ➔ Trạm 1 tự cứu): Lỗi mạng 500 ở 2 lần đầu chỉ đẩy cửa sổ CB lên 2/5 = 40% (< 50%, VẪN CLOSED 🟢). Nhờ CB chưa ngắt, Retry nghỉ 500ms + 1.000ms rồi đẩy lần #3 thành công 200 OK (cửa sổ trượt thành [✓][✓][✕][✕][✓]).',
+        'Chặng 3 (Trạm 4 cắt 1s ➔ CB vọt 60% BUNG OPEN): User Service treo 3s. Lần gọi #1 bị Trạm 4 (Feign) cắt dứt ở 1s đẩy CB trượt thành [✓][✕][✕][✓][✕] = 60% ➔ BUNG OPEN 🔴 ngay! Lần Retry #2 chạm OPEN lập tức bị chặn 503 (chỉ 1 lượt User).',
+        'Chặng 4 (Trạm 2 khóa cửa Fail-Fast): Mạch OPEN chặn đứng lượt khách mới ngay sau khi lọt qua Trạm 1 (~10ms, HTTP 503, 0 lượt gọi User), giữ yên cho Trạm 3, Trạm 4 và dừng hẳn Retry.',
+        heal ? `Chặng 5 (Xuyên cả 4 trạm ➔ CLOSED 🟢): User khỏe lại & hết 3s nghỉ OPEN ➔ Trạm 2 mở hé HALF-OPEN và cho ${probes}/${probes} lượt thăm dò đi xuyên suốt Trạm 1–4 thành công (200 OK), tự đóng mạch về CLOSED 🟢.` : '',
       ].filter(Boolean);
-    }
-    case 'fallback': {
-      const list = Array.isArray(result) ? result : [result];
-      if ((list[0]?.status ?? 200) < 400 || list[1]?.body?.outcome !== 'FALLBACK') return [];
-      return [
-        'User Service bị giả lập lỗi toàn bộ.',
-        'Khi TẮT Fallback: lỗi sẽ trả thẳng về giao diện người dùng (HTTP 500/503).',
-        'Khi BẬT Fallback: thay vì hiện trang lỗi trắng, hệ thống trả về dữ liệu khách hàng tạm ("Khách dự phòng") với HTTP 200 để trải nghiệm không bị đứt đoạn.',
-      ];
     }
     default:
       return [];
@@ -511,7 +511,7 @@ function CompareMatrix({ scenario }) {
   );
 }
 
-function UnprotectedTable({ scenario, result }) {
+function UnprotectedTable({ scenario, result, activeCallIndex = null }) {
   if (scenario === 'retry') {
     const first = Array.isArray(result) ? result[0] : result;
     const { body = {}, status, measuredMs } = first || {};
@@ -601,41 +601,62 @@ function UnprotectedTable({ scenario, result }) {
   }
 
   if (scenario === 'bulkhead') {
-    const { body = {}, status } = result || {};
+    const { body = {} } = result || {};
+    const summary = body.summary || {};
+    const collapsed = summary.OVERLOAD_COLLAPSE ?? 0;
+    const okCount = summary.OK ?? 0;
+    const total = body.parallelRequests ?? 10;
+    const safeCap = body.safeCapacity ?? 3;
+    const peak = body.peakConcurrent ?? total;
     return (
       <>
         <div className="unprotected-danger-banner">
           <AlertTriangle size={18} />
           <div>
-            <strong>CẠN KIỆT LUỒNG XỬ LÝ DO THIẾU BULKHEAD:</strong>
-            <p>10 người cùng bấm một lúc. Vì không có giới hạn số chỗ (Bulkhead 3 chỗ), cả 10 người đều ùa vào chiếm hết 10/10 luồng làm việc của máy chủ trong 2 giây. Các chức năng quan trọng khác (tạo đơn, thanh toán) bị đơ theo!</p>
+            <strong>THẢM HỌA KHI THIẾU BULKHEAD (VỠ NGƯỠNG QUÁ TẢI · {okCount}/{total} THÀNH CÔNG):</strong>
+            <p>
+              Ngưỡng chịu tải an toàn chỉ là <strong>{safeCap} luồng đồng thời</strong>. Vì không có Bulkhead gác cửa,
+              cả <strong>{peak}/{total} lượt</strong> cùng chen qua Order Service sang User Service một lúc ➔ gây nghẽn kết nối và <strong>sập tập thể {collapsed}/{total} lượt (HTTP 503)</strong>!
+            </p>
           </div>
         </div>
-        <div className="table-frame" tabIndex={0} role="region" aria-label="Bảng kết quả không có Bulkhead">
+        <div className="table-frame call-details" tabIndex={0} role="region" aria-label="Bảng kết quả không có Bulkhead">
           <table className="result-table">
-            <caption>10 lượt cùng lúc · HTTP {status} · {milliseconds(body?.totalMs)} (Chiếm hết 10/10 luồng)</caption>
+            <caption>
+              Không có Bulkhead · Đỉnh đồng thời {peak}/{safeCap} luồng an toàn · Thành công {okCount}/{total} · Đo hết {milliseconds(body?.totalMs)}
+            </caption>
             <thead>
               <tr>
-                <th scope="col">Kết quả từng lượt</th>
-                <th scope="col">Số lượt</th>
-                <th scope="col">Tác động tới máy chủ</th>
+                <th scope="col">Hiện trạng khi không có Bulkhead</th>
+                <th scope="col">Số lượng</th>
+                <th scope="col">Hậu quả thực tế</th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <th scope="row">Nhận vào xử lý hết nhưng đơ 2 giây</th>
-                <td className="numeric">10 / 10</td>
-                <td><strong style={{ color: '#ef4444' }}>Chiếm sạch 10/10 luồng suốt 2.000ms 🚨</strong></td>
+                <th scope="row">Số lượt tràn sang User Service cùng lúc</th>
+                <td className="numeric">{peak} / {safeCap} tối đa</td>
+                <td><strong style={{ color: '#ef4444' }}>Vượt gấp {(peak / safeCap).toFixed(1)}× ngưỡng an toàn 🚨</strong></td>
               </tr>
               <tr>
-                <th scope="row">Lượt bị chặn báo bận để bảo vệ (429)</th>
-                <td className="numeric">0 / 10</td>
-                <td><span style={{ color: '#ef4444' }}>Không chặn bớt lượt nào (Không có Bulkhead)</span></td>
+                <th scope="row">Số lượt thành công (HTTP 200)</th>
+                <td className="numeric">{okCount} / {total}</td>
+                <td><strong style={{ color: '#ef4444' }}>Cả {collapsed}/{total} lượt ĐỀU SẬP HTTP 503 (Chết chùm) 💥</strong></td>
+              </tr>
+              <tr>
+                <th scope="row">Số lượt được chặn bận có kiểm soát (HTTP 429)</th>
+                <td className="numeric">0 / {total}</td>
+                <td>Không có vách ngăn cản bớt tải thừa ở cửa Order Service</td>
               </tr>
             </tbody>
           </table>
         </div>
-        {body?.requestResults && <CallDetails rows={body.requestResults} />}
+        {body?.requestResults && (
+          <CallDetails
+            rows={body.requestResults}
+            customTitle={`Chi tiết ${body.requestResults.length} lượt bị sập hàng loạt (${okCount}/${total} thành công)`}
+          />
+        )}
       </>
     );
   }
@@ -665,8 +686,9 @@ function UnprotectedTable({ scenario, result }) {
             <tbody>
               {responses.map((item, index) => {
                 const { body = {}, status, measuredMs } = item || {};
+                const isHighlightedRow = activeCallIndex === index;
                 return (
-                <tr key={index}>
+                <tr key={index} className={isHighlightedRow ? 'active-step-row' : undefined}>
                   <th scope="row">
                     Lượt {index + 1}/6 (Không tự ngắt)
                     {index === 5 && (
@@ -688,10 +710,10 @@ function UnprotectedTable({ scenario, result }) {
     );
   }
 
-  return <ResultTable scenario={scenario} result={result} />;
+  return <ResultTable scenario={scenario} result={result} activeCallIndex={activeCallIndex} />;
 }
 
-export default function DemoResults({ scenario, result, breaker, busy, error, view, onViewChange, scenarioMode = 'protected' }) {
+export default function DemoResults({ scenario, result, breaker, busy, error, view, onViewChange, scenarioMode = 'protected', activeCallIndex = null }) {
   if (scenarioMode === 'compare') {
     return <CompareMatrix scenario={scenario} />;
   }
@@ -716,7 +738,7 @@ export default function DemoResults({ scenario, result, breaker, busy, error, vi
           <span className="unprotected-badge-indicator">⚠️ CHẾ ĐỘ: KHÔNG CÓ BẢO VỆ</span>
         </div>
         {view === 'table' ? (
-          <UnprotectedTable scenario={scenario} result={result} />
+          <UnprotectedTable scenario={scenario} result={result} activeCallIndex={activeCallIndex} />
         ) : (
           <pre className="json-response" tabIndex={0} aria-label="Nội dung JSON từ API">{JSON.stringify(payload, null, 2)}</pre>
         )}
@@ -737,7 +759,7 @@ export default function DemoResults({ scenario, result, breaker, busy, error, vi
       {(scenario === 'breaker' || scenario === 'converge') && breaker && <span className="breaker-state">Mạch hiện tại <strong>{breaker}</strong></span>}
     </div>
     {view === 'table'
-      ? <ResultTable scenario={scenario} result={result} />
+      ? <ResultTable scenario={scenario} result={result} activeCallIndex={activeCallIndex} />
       : <pre className="json-response" tabIndex={0} aria-label="Nội dung JSON từ API">{JSON.stringify(payload, null, 2)}</pre>}
     <div className="conclusion">
       <ListChecks size={19} aria-hidden="true" />

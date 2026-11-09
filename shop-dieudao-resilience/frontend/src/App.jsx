@@ -27,22 +27,26 @@ const scenarios = [
     chapter: 'CHỦ ĐỀ 02',
     detail: 'User Service bị lỗi tạm thời ở 2 lần gọi đầu. Hệ thống tự động thử lại (chạy cả Resilience4j Retry lẫn Spring Retry) kèm khoảng nghỉ tăng dần nên lần thứ 3 vẫn thành công.',
     condition: 'Lỗi 2 lần đầu', action: 'Thử lấy thông tin khách', question: 'Tự thử lại có cứu được đơn hàng?' },
-  { id: 'bulkhead', name: 'Bulkhead', icon: Layers3, label: 'Topic 3 · Giới hạn luồng', title: '10 người bấm cùng lúc',
+  { id: 'bulkhead', name: 'Bulkhead', icon: Layers3, label: 'Topic 3 · Giới hạn luồng', title: 'Giới hạn số luồng đồng thời để chống sập dây chuyền',
     chapter: 'CHỦ ĐỀ 03',
-    detail: 'Mỗi lượt xử lý mất 2 giây. Bulkhead giới hạn tối đa 3 người được xử lý cùng lúc, 7 người đến sau bị báo bận ngay để tránh treo toàn bộ máy chủ.',
-    condition: '10 lượt · tối đa 3 chỗ', action: 'Gửi 10 lượt cùng lúc', question: 'Hệ thống nhận tối đa bao nhiêu lượt?' },
+    detail: 'Gửi cùng lúc 10 lượt tra cứu User chậm (2s) khi ngưỡng chịu tải an toàn chỉ là 3 chỗ. Bulkhead giữ đúng 3 suất (#1–#3 = 200 OK) và báo bận nhanh HTTP 429 cho 7 lượt thừa — tránh cảnh cả 10/10 tràn vào cùng lúc làm vỡ kết nối.',
+    condition: '10 lượt · tối đa 3 chỗ', action: 'Gửi 10 lượt cùng lúc', question: 'Bulkhead cứu hệ thống khi quá tải thế nào?' },
   { id: 'breaker', name: 'Circuit Breaker', icon: Zap, label: 'Topic 4 · Cầu dao tự ngắt', title: 'Ngừng gọi khi dịch vụ đang lỗi',
     chapter: 'CHỦ ĐỀ 04',
     detail: 'Khi User Service lỗi liên tiếp quá 50%, cầu dao sẽ tự ngắt (chuyển sang OPEN) để chặn ngay các cuộc gọi mới tại cửa, không dội thêm tải vào dịch vụ đang hỏng.',
     condition: 'Lỗi liên tiếp 100%', action: 'Gửi 6 lượt liên tiếp', question: 'Khi nào cầu dao ngắt mạch?' },
-  { id: 'converge', name: 'Hội tụ 4 topic', icon: Network, label: 'Tổng hợp · Cả 4 cùng chạy', title: 'Kết hợp cả 4 cơ chế trong 1 luồng',
+  { id: 'converge', name: 'Hội tụ 4 topic', icon: Network, label: 'Tổng hợp · 1 luồng 4 trạm', title: 'Hội tụ 4 trạm bảo vệ trên CÙNG 1 đường ống xử lý',
     chapter: 'HỘI TỤ 4 TOPIC',
-    detail: 'Một luồng xử lý hoàn chỉnh ghép cả 4 lớp bảo vệ theo thứ tự: Retry ➔ Circuit Breaker ➔ Bulkhead ➔ Timeout. Xem cả 5 giai đoạn từ lọc tải, tự cứu, ngắt cầu dao đến tự mở lại.',
-    condition: '5 giai đoạn · khép kín', action: 'Chạy trọn vẹn 5 giai đoạn', question: 'Mỗi cơ chế làm gì qua từng giai đoạn?' },
-  { id: 'fallback', name: 'Fallback & Kết hợp', icon: ShieldCheck, label: 'Bonus · Dữ liệu tạm', title: 'Trả dữ liệu tạm khi mọi cách đều lỗi',
-    chapter: 'MỞ RỘNG (BONUS)',
-    detail: 'So sánh giữa việc hiện trang lỗi thẳng (khi tắt Fallback) với việc trả dữ liệu dự phòng an toàn (khi bật Fallback) để ứng dụng không bị đơ.',
-    condition: 'Lỗi liên tiếp 100%', action: 'So sánh có và không dự phòng', question: 'Người dùng sẽ thấy gì trên màn hình?' },
+    detail: 'Theo dõi 1 đường ống duy nhất đi xuyên qua 4 trạm lồng nhau theo đúng thứ tự: (1) Retry ➔ (2) Circuit Breaker [cửa sổ 5 mẫu] ➔ (3) Bulkhead [3 chỗ] ➔ (4) Feign Timeout [1s], qua 5 chặng nối tiếp khép kín.',
+    condition: '4 Trạm lồng nhau · 5 Chặng', action: 'Chạy trọn vẹn 5 chặng', question: '4 lớp bảo vệ hợp lực trên cùng 1 đường ống như thế nào?' },
+];
+
+const convergeActs = [
+  { num: 1, clock: 'Trạm 3', name: 'Bulkhead lọc 3/6', guard: 'CB: 3/5 [✓✓✓]', time: 3600 },
+  { num: 2, clock: 'Trạm 1', name: 'Retry tự cứu (#3)', guard: 'CB: 40% CLOSED', time: 15600 },
+  { num: 3, clock: 'Trạm 4 ➔ 2', name: 'Cắt 1s ➔ Bung OPEN', guard: 'CB: 60% OPEN 🔴', time: 20500 },
+  { num: 4, clock: 'Trạm 2', name: 'Chặn cửa 503', guard: 'CB: OPEN (0 lượt)', time: 26800 },
+  { num: 5, clock: 'Trạm 2', name: 'Thăm dò ➔ Mở lại', guard: 'CB: 2/2 CLOSED 🟢', time: 36800 },
 ];
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -83,6 +87,8 @@ export default function App() {
   const [dashboardLayout, setDashboardLayout] = useState('stacked'); // 'stacked' (full-width) or 'split' (2-column)
   const [scenarioMode, setScenarioMode] = useState('protected'); // 'protected' | 'unprotected' | 'compare'
   const [retryFailCount, setRetryFailCount] = useState(2); // 1 (lần đầu retry OK luôn) | 2 (lần 3 mới OK)
+  const [activeCallIndex, setActiveCallIndex] = useState(null);
+  const [externalJump, setExternalJump] = useState(null);
   const running = useRef(false);
   const scenario = scenarios[selected];
   const lesson = lessons[scenario.id];
@@ -123,6 +129,8 @@ export default function App() {
     setNeedsRecovery(false);
     setRunCount(0);
     setProbeRunCount(0);
+    setActiveCallIndex(null);
+    setExternalJump(null);
   }
 
   async function readBreaker(baseUrl) {
@@ -158,11 +166,12 @@ export default function App() {
     setResult(null);
     setClock(null);
     setNeedsRecovery(false);
+    setActiveCallIndex(null);
     setRoute(base);
     setRunCount((prev) => prev + 1);
     return perform(async () => {
       await requireOk(user + '/api/chaos/reset', 'POST');
-      if (['breaker', 'fallback', 'converge'].includes(scenario.id) && scenarioMode !== 'unprotected') {
+      if (['breaker', 'converge'].includes(scenario.id) && scenarioMode !== 'unprotected') {
         const status = await requireOk(base + resilience + '/reset', 'POST');
         setBreaker(status.circuitBreaker_demo4.state);
         if (status.circuitBreaker_converge) setConvergeBreaker(status.circuitBreaker_converge.state);
@@ -195,7 +204,7 @@ export default function App() {
             break;
           }
           case 'bulkhead': {
-            setStage('Đang gửi 10 lượt cùng lúc khi KHÔNG có Bulkhead (chiếm hết 10 luồng xử lý trong 2 giây)…');
+            setStage('Đang gửi 10 lượt cùng lúc khi KHÔNG có Bulkhead (vượt ngưỡng 3 chỗ)…');
             await requireOk(`${user}/api/chaos?delayMs=2000`, 'POST');
             const response = await callOrder(base, '/burst/no-protection?n=10');
             setResult(response);
@@ -205,11 +214,11 @@ export default function App() {
             await requireOk(`${user}/api/chaos?failPercent=100`, 'POST');
             const calls = [];
             for (let index = 1; index <= 6; index += 1) {
-              setStage(`Đang gửi lượt ${index}/6 (không có cầu dao nên vẫn tiếp tục gửi sang User Service đang lỗi)…`);
+              setStage(`Lượt ${index}/6: Đang gửi qua mạng sang User Service (Không có cầu dao)…`);
               const res = await callOrder(base, '/no-protection/1');
               calls.push(res);
               setResult([...calls]);
-              await pause(200);
+              if (index < 6) await pause(1480);
             }
             break;
           }
@@ -217,7 +226,7 @@ export default function App() {
         return;
       }
       const query = { timeout: 'delayMs=4000', retry: `failFirstN=${retryFailCount}`, bulkhead: 'delayMs=2000',
-        breaker: 'failPercent=100', fallback: 'failPercent=100' }[scenario.id];
+        breaker: 'failPercent=100' }[scenario.id];
       if (query) await requireOk(`${user}/api/chaos?${query}`, 'POST');
       setStage('Đang gọi Order Service…');
 
@@ -266,19 +275,27 @@ export default function App() {
           break;
         }
         case 'bulkhead': {
-          setStage('Đang gửi 10 lượt song song (Bulkhead cấp 3 slot / từ chối 7 lượt)…');
+          setStage('Đang gửi 10 lượt cùng lúc (Bulkhead chỉ cấp 3 chỗ, chặn nhanh 7 lượt 429)…');
           const response = await callOrder(base, '/burst/bulkhead?n=10');
           setResult(response);
           break;
         }
         case 'breaker': {
           const calls = [];
-          for (let index = 1; index <= 6; index += 1) {
-            setStage(`Đang gửi lượt ${index}/6…`);
+          for (let index = 1; index <= 5; index += 1) {
+            setStage(`Lượt ${index}/6: Đang gọi User Service (Đếm mẫu ${index}/5 · Mạch vẫn CLOSED)…`);
             const res = await callOrder(base, '/circuit-breaker/1');
             calls.push(res);
             setResult([...calls]);
+            if (index < 5) await pause(1480);
           }
+          await readBreaker(base);
+          setStage('Đủ 5/5 mẫu lỗi (100% ≥ 50%) ➔ CẦU DAO BUNG OPEN 🔴! Chuẩn bị gửi lượt 6/6…');
+          await pause(3000);
+          setStage('Lượt 6/6: Gửi khi cầu dao đang OPEN ➔ Bị chặn ngay Fail-Fast (HTTP 503)…');
+          const res6 = await callOrder(base, '/circuit-breaker/1');
+          calls.push(res6);
+          setResult([...calls]);
           await readBreaker(base);
           setNeedsRecovery(true);
           break;
@@ -294,51 +311,64 @@ export default function App() {
             phases.push({ ...response, measuredMs: Math.round(performance.now() - start), phase });
             setResult([...phases]);
           };
-          await step('Pha 1/5 · Bulkhead: gửi 6 lượt song song (lọc bão tải)…', 'delayMs=600', '/burst/converge?n=6',
-            { title: 'Pha 1 · Lọc bão lưu lượng', topics: 'Bulkhead', expect: '3 suất cấp phép (200 OK), 3 lượt quá tải bị từ chối (429)', statusDesc: 'Thành công lọc tải' });
-          await step('Pha 2/5 · Retry: User Service lỗi chập chờn 2 lần đầu…', 'failFirstN=2', '/converge/1',
-            { title: 'Pha 2 · Lỗi mạng chập chờn', topics: 'Retry', expect: 'Lần 1 & 2 lỗi 500, Retry tự gọi lại lần 3 thành công (200 OK)', statusDesc: 'Thành công tự cứu' });
-          await step('Pha 3/5 · Feign timeout: User Service bị treo 3s…', 'delayMs=3000', '/converge/1',
-            { title: 'Pha 3 · Dịch vụ đối tác bị treo', topics: 'Feign timeout + CB', expect: 'Feign cắt sau 1s (504), CB ghi nhận lỗi và bung mạch OPEN', statusDesc: 'Can thiệp ngắt mạch' });
-          await step('Pha 4/5 · Circuit Breaker: gọi khi đối tác đang chết…', 'delayMs=3000', '/converge/1',
-            { title: 'Pha 4 · Mạch OPEN (Bảo vệ sinh tồn)', topics: 'Circuit Breaker + Retry', expect: 'Từ chối ngay trong 14ms (503), 0 lần gọi User, Retry dừng chống Retry Storm', statusDesc: 'Bảo vệ sinh tồn (Fail-fast)' });
 
-          // Pha 5: Tự chữa lành & Khôi phục về 200 OK
-          setStage('Pha 5/5 · Tự chữa lành: khôi phục User Service & chờ mạch thăm dò…');
+          // Chặng 1: 6 lượt cùng ùa vào ➔ Trạm 3 (Bulkhead) giữ 3 & chặn 3 (429), nạp 3 ô xanh CB
+          await step('Chặng 1/5 · 6 lượt cùng ùa vào ➔ Trạm 3 (Bulkhead) giữ 3, chặn 3 (429) & nạp 3 ô CB…', 'delayMs=600', '/burst/converge?n=6',
+            { title: 'Chặng 1 · Trạm 3 (Bulkhead) lọc tải', topics: 'Trạm 3 (3 chỗ) · Nạp CB [✓✓✓]', expect: 'Giữ #1–#3 qua Trạm 4 (200 OK), chặn nhanh #4–#6 (429 — Retry & CB bỏ qua)', statusDesc: 'Lọc 3/6 & Nạp 3 ô xanh CB' });
+          await pause(1500);
+
+          // Chặng 2: Mạng chập chờn 2 lần 500 ➔ CB mới 40% CLOSED ➔ Trạm 1 (Retry) cứu lần #3
+          await step('Chặng 2/5 · Mạng chập chờn 2 lỗi 500 (CB mới 40% CLOSED) ➔ Trạm 1 Retry cứu lần #3…', 'failFirstN=2', '/converge/1',
+            { title: 'Chặng 2 · Trạm 1 (Retry) tự cứu khi CB 40%', topics: 'Trạm 1 Retry + Trạm 2 (40% < 50%)', expect: '2 lỗi 500 đẩy CB = 40% (VẪN CLOSED) ➔ Retry nghỉ 500ms+1s cứu #3 (200 OK)', statusDesc: 'Tự cứu #3 · CB giữ 40% CLOSED' });
+          await pause(850);
+
+          // Chặng 3: User treo cứng 3s ➔ Trạm 4 (Feign) cắt 1s ➔ CB vọt 60% BUNG OPEN chặn Retry #2
+          await step('Chặng 3/5 · User treo 3s ➔ Trạm 4 (Feign) cắt 1s ➔ Trạm 2 vọt 60% BUNG OPEN!', 'delayMs=3000', '/converge/1',
+            { title: 'Chặng 3 · Trạm 4 cắt 1s ➔ Trạm 2 bung OPEN', topics: 'Trạm 4 Feign 1s + Trạm 2 (60% OPEN)', expect: 'Lần 1 cắt ở 1s ➔ CB đạt 60% bung OPEN ➔ Chặn luôn Retry #2 (HTTP 503)', statusDesc: 'Cắt treo 1s & Bung OPEN 🔴' });
+          const midStatus = await requireOk(base + resilience + '/status');
+          setConvergeBreaker(midStatus.circuitBreaker_converge?.state ?? 'OPEN');
+          await pause(750);
+
+          // Chặng 4: Trạm 2 đang OPEN ➔ Chặn Fail-Fast ngay tại cửa (503, 0 lượt gọi User), Retry dừng
+          await step('Chặng 4/5 · Trạm 2 (CB OPEN) chặn ngay lượt mới (503, 0 lượt User), Retry dừng hẳn…', 'delayMs=3000', '/converge/1',
+            { title: 'Chặng 4 · Trạm 2 chặn cửa Fail-Fast', topics: 'Trạm 2 OPEN 🔴 (Bảo vệ Trạm 3–4)', expect: 'Chặn ngay ở Trạm 2 (~10ms, 503, 0 lượt sang Trạm 3–4–User) để đối tác nghỉ', statusDesc: 'Fail-fast · 0 bão Retry' });
+          await pause(1100);
+
+          // Chặng 5: User khỏe lại ➔ Hết 3s OPEN ➔ Hé HALF-OPEN thăm dò 2 lượt xuyên 4 trạm ➔ CLOSED 🟢
+          setStage('Chặng 5/5 · User Service khỏe lại! Đang chờ Trạm 2 hết 3s OPEN để hé HALF-OPEN…');
           await requireOk(user + '/api/chaos/reset', 'POST');
           let cbState = 'OPEN';
-          for (let i = 0; i < 5 && cbState === 'OPEN'; i++) {
+          for (let i = 0; i < 6 && cbState === 'OPEN'; i++) {
             await pause(1000);
             const status = await requireOk(base + resilience + '/status');
             cbState = status.circuitBreaker_converge?.state;
             setConvergeBreaker(cbState);
           }
-          setStage('Pha 5/5 · Gửi lượt thăm dò hoàn tất khép mạch…');
+
+          setStage('Chặng 5/5 · Trạm 2 hé HALF-OPEN: gửi 2 lượt thăm dò xuyên cả 4 trạm ➔ CLOSED 🟢…');
           const start5 = performance.now();
-          const response5 = await callOrder(base, '/converge/1');
+          let probeResponse = await callOrder(base, '/converge/1');
+          let probeCount = 1;
+          let afterProbe1 = await requireOk(base + resilience + '/status');
+          if (afterProbe1.circuitBreaker_converge?.state === 'HALF_OPEN') {
+            await pause(300);
+            probeResponse = await callOrder(base, '/converge/1');
+            probeCount = 2;
+            afterProbe1 = await requireOk(base + resilience + '/status');
+          }
           phases.push({
-            ...response5,
+            ...probeResponse,
             measuredMs: Math.round(performance.now() - start5),
+            body: { ...probeResponse.body, probeCalls: probeCount },
             phase: {
-              title: 'Pha 5 · Tự chữa lành (Self-Healing)',
-              topics: 'Circuit Breaker (CLOSED)',
-              expect: 'Thăm dò thành công (200 OK), mạch tự đóng lại CLOSED, khép lại trọn vẹn 1 flow!',
-              statusDesc: 'Thành công khôi phục (200 OK)',
+              title: 'Chặng 5 · Thăm dò xuyên 4 trạm ➔ CLOSED',
+              topics: `Trạm 2 HALF-OPEN (${probeCount}/${probeCount} OK) ➔ CLOSED`,
+              expect: `Thăm dò ${probeCount}/${probeCount} xuyên Trạm 1–4 thành công (200 OK) ➔ Đóng CLOSED 🟢!`,
+              statusDesc: 'Tự chữa lành 200 OK 🟢',
             },
           });
           setResult([...phases]);
-          const finalStatus = await requireOk(base + resilience + '/status');
-          setConvergeBreaker(finalStatus.circuitBreaker_converge?.state);
-          break;
-        }
-        case 'fallback': {
-          setStage('Đang gọi khi tắt dữ liệu dự phòng…');
-          const noFallback = await callOrder(base, '/combined/1?fallback=false');
-          setResult([noFallback]);
-          await requireOk(base + resilience + '/reset', 'POST');
-          setStage('Đang gọi khi bật dữ liệu dự phòng…');
-          const withFallback = await callOrder(base, '/combined/1?fallback=true');
-          setResult([noFallback, withFallback]);
+          setConvergeBreaker(afterProbe1.circuitBreaker_converge?.state);
           break;
         }
       }
@@ -388,6 +418,7 @@ export default function App() {
       setResult(null);
       setClock(null);
       setNeedsRecovery(false);
+      setActiveCallIndex(null);
       setRoute(null);
     }, false);
   }
@@ -429,7 +460,7 @@ export default function App() {
             <div className="stage-header">
               <div className="stage-meta"><span className="chapter">{scenario.chapter ?? `KỊCH BẢN ${String(selected).padStart(2, '0')}`}</span><span className="condition"><i />{scenario.condition}</span></div>
               <h2>{scenario.title}</h2><p>{scenario.detail}</p>
-              <div className="flow"><span><Package size={16} /> Order Service</span><ArrowRight size={17} aria-hidden="true" /><span className="flow-guard"><scenario.icon size={16} /> {scenario.id === 'normal' ? 'OpenFeign' : scenario.name}</span><ArrowRight size={17} aria-hidden="true" /><span><UserRound size={16} /> User Service</span></div>
+              <div className="flow"><span><Package size={16} /> Order Service</span><ArrowRight size={17} aria-hidden="true" /><span className="flow-guard"><scenario.icon size={16} /> {scenario.id === 'normal' ? 'OpenFeign' : scenario.id === 'converge' ? '1. Retry ➔ 2. CB ➔ 3. Bulkhead ➔ 4. Feign 1s' : scenario.name}</span><ArrowRight size={17} aria-hidden="true" /><span><UserRound size={16} /> User Service</span></div>
               {lesson && (
                 <details className="knowledge-accordion">
                   <summary>
@@ -469,7 +500,7 @@ export default function App() {
                     <button
                       type="button"
                       className={`mode-tab protected ${scenarioMode === 'protected' ? 'active' : ''}`}
-                      onClick={() => { setScenarioMode('protected'); setResult(null); }}
+                      onClick={() => { setScenarioMode('protected'); setResult(null); setActiveCallIndex(null); }}
                       disabled={busy}
                     >
                       <ShieldCheck size={16} />
@@ -478,7 +509,7 @@ export default function App() {
                     <button
                       type="button"
                       className={`mode-tab unprotected ${scenarioMode === 'unprotected' ? 'active' : ''}`}
-                      onClick={() => { setScenarioMode('unprotected'); setResult(null); }}
+                      onClick={() => { setScenarioMode('unprotected'); setResult(null); setActiveCallIndex(null); }}
                       disabled={busy}
                     >
                       <AlertTriangle size={16} />
@@ -505,7 +536,7 @@ export default function App() {
                     <p>
                       {scenario.id === 'timeout' && 'Không bật Timeout. Khi User Service chậm 4 giây, luồng xử lý bên Order Service phải đứng chờ đủ 4 giây. Nếu nhiều người bấm cùng lúc, máy chủ sẽ hết luồng và đơ cứng.'}
                       {scenario.id === 'retry' && 'Không bật Retry. Khi User Service bị lỗi tạm thời (500) ngay lần đầu, đơn hàng lập tức bị hủy và báo lỗi về màn hình thay vì tự thử lại.'}
-                      {scenario.id === 'bulkhead' && 'Không bật Bulkhead giới hạn luồng. Cả 10 người bấm cùng lúc đều được đẩy vào xử lý, chiếm trọn 10/10 luồng trong 2 giây khiến các chức năng khác đứng hình theo.'}
+                      {scenario.id === 'bulkhead' && 'Không bật Bulkhead (giới hạn 3 chỗ). Cả 10/10 lượt chậm tràn thẳng sang User Service cùng lúc, vượt xa ngưỡng chịu tải an toàn (3 luồng) ➔ Nghẽn sập kết nối tập thể khiến 0/10 lượt thành công (10× HTTP 503)!'}
                       {scenario.id === 'breaker' && 'Không bật Circuit Breaker (cầu dao ngắt). User Service đã hỏng 100% nhưng Order Service vẫn cố gửi cả 6 cuộc gọi qua mạng, vừa tốn thời gian chờ vừa dội tải thêm.'}
                     </p>
                   </div>
@@ -548,7 +579,7 @@ export default function App() {
                         <AlertTriangle size={17} />
                         {scenario.id === 'timeout' && '⚠️ Chạy KHÔNG có Timeout (Đứng chờ 4s)'}
                         {scenario.id === 'retry' && '⚠️ Gọi KHÔNG có Retry (Báo lỗi ngay lần 1)'}
-                        {scenario.id === 'bulkhead' && '⚠️ Gửi 10 lượt KHÔNG có Bulkhead (Chiếm hết luồng)'}
+                        {scenario.id === 'bulkhead' && '⚠️ Gửi 10 lượt KHÔNG có Bulkhead (Tràn 10/3 chỗ ➔ Sập 503)'}
                         {scenario.id === 'breaker' && '⚠️ Gửi 6 lượt KHÔNG có Circuit Breaker (Gửi mù 6/6 lần)'}
                       </>
                     ) : (
@@ -603,6 +634,39 @@ export default function App() {
                 </div>
               </div>
 
+              {scenario.id === 'converge' && (
+                <div className="story-ribbon" aria-label="Tiến trình 5 chặng trên đường ống 4 trạm">
+                  <div className="story-ribbon-header">
+                    <strong>🔗 5 CHẶNG TRÊN CÙNG 1 ĐƯỜNG ỐNG (Retry ➔ CB ➔ Bulkhead ➔ Feign 1s)</strong>
+                    <span>Bấm từng chặng bên dưới để xem chậm hoặc tua thẳng tới bước đó</span>
+                  </div>
+                  <div className="story-acts-grid">
+                    {convergeActs.map((act, idx) => {
+                      const doneCount = Array.isArray(result) ? result.length : 0;
+                      const currentVisual = activeCallIndex !== null ? activeCallIndex : (busy ? doneCount : null);
+                      const isActive = currentVisual === idx;
+                      const isDone = !isActive && doneCount > idx;
+                      return (
+                        <button
+                          key={act.num}
+                          type="button"
+                          className={`story-act-card ${isActive ? 'is-active' : isDone ? 'is-done' : ''}`}
+                          onClick={() => setExternalJump({ time: act.time, nonce: Date.now() })}
+                          title={`Bấm để xem ${act.name}`}
+                        >
+                          <div className="story-act-top">
+                            <span className="story-clock">{act.clock}</span>
+                            <span className="story-badge">Chặng {act.num}/5</span>
+                          </div>
+                          <strong>{act.name}</strong>
+                          <span className="story-guard">{act.guard}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               <div className={`demo-dashboard layout-${dashboardLayout}`}>
                 <div className="dashboard-visualizer">
                   <ErrorBoundary resetKey={`${scenario.id}:${scenarioMode}:${retryFailCount}:${runCount}:${probeRunCount}`} onReset={() => setResult(null)}>
@@ -617,6 +681,8 @@ export default function App() {
                       scenarioMode={scenarioMode}
                       isUnprotected={scenarioMode === 'unprotected'}
                       retryFailCount={retryFailCount}
+                      externalJump={externalJump}
+                      onActiveCallChange={setActiveCallIndex}
                     />
                   </ErrorBoundary>
                 </div>
@@ -633,6 +699,7 @@ export default function App() {
                         view={resultView}
                         onViewChange={setResultView}
                         scenarioMode={scenarioMode}
+                        activeCallIndex={activeCallIndex}
                       />
                     </ErrorBoundary>
                   </div>
