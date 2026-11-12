@@ -9,7 +9,7 @@ Các bài demo bên dưới thực hiện trên trình duyệt bằng Swagger. M
 | Resilience4j Circuit Breaker      | Dựa trên kết quả gần đây, có nên cho lời gọi tiếp theo đi qua không? |
 | Resilience4j Bulkhead             | Hiện còn đủ suất để nhận thêm một lời gọi đồng thời không?           |
 
-Project dùng **OpenFeign** làm HTTP client và **Resilience4j** cho Retry, Circuit Breaker, Bulkhead và TimeLimiter. **Spring Retry** và **Spring RestClient** được trình bày để đối chiếu. Các lệnh bên dưới chạy trên những thành phần đã tích hợp sẵn trong project.
+Project cài đặt và cho chạy thật cả hai cặp thư viện song song: **OpenFeign** & **Spring RestClient** (Timeout), **Resilience4j Retry** & **Spring Retry (`RetryTemplate`)**, cùng **Resilience4j Circuit Breaker**, **Bulkhead** (`Semaphore` & `ThreadPool`), **TimeLimiter** và **Fallback**. Các lệnh bên dưới chạy trên những thành phần đã tích hợp sẵn trong project.
 
 ## Chuẩn bị
 
@@ -56,28 +56,31 @@ Khi `order-service` gọi `user-service`, sự cố có thể xảy ra trước 
 - **Connect timeout.** Nếu cổng từ chối kết nối ngay, lỗi có thể đến trước ngưỡng timeout. Kết nối được tái sử dụng từ pool có thể bỏ qua giai đoạn mở kết nối.
 - **Read timeout.** HTTP client quyết định cách đo khoảng chờ dữ liệu. Tổng thời gian của request có thể dài hơn ngưỡng read timeout.
 
-**OpenFeign** khai báo API bằng interface và cho phép cấu hình `connectTimeout`, `readTimeout` theo tên client. Các giá trị trong cấu hình Feign của project tính bằng mili giây. **Spring RestClient** là HTTP client đồng bộ có API gọi theo chuỗi phương thức. Khi dùng RestClient, timeout đến từ HTTP client và `ClientHttpRequestFactory` được chọn. Với builder do Spring Boot tự cấu hình, các thiết lập HTTP chung có thể áp dụng qua `spring.http.clients.connect-timeout` và `spring.http.clients.read-timeout`. [Spring Cloud OpenFeign](https://docs.spring.io/spring-cloud-openfeign/reference/spring-cloud-openfeign.html), [Spring Boot RestClient](https://docs.spring.io/spring-boot/reference/io/rest-client.html)
+**OpenFeign** khai báo API bằng interface và cho phép cấu hình `connectTimeout`, `readTimeout` theo tên client. Các giá trị trong cấu hình Feign của project tính bằng mili giây. **Spring RestClient** là HTTP client đồng bộ hướng hàm từ Spring 6+. Trong project này, RestClient được cấu hình tường minh qua `SimpleClientHttpRequestFactory` (`connectTimeout = 1000 ms`, `readTimeout = 2500 ms`) tại `RestClientConfig.java`. *(Với các dự án dùng auto-configuration mặc định của Spring Boot 3.4+, còn có thể khai báo qua nhóm property `spring.http.client.*`.)* [Spring Cloud OpenFeign](https://docs.spring.io/spring-cloud-openfeign/reference/spring-cloud-openfeign.html), [Spring Boot RestClient](https://docs.spring.io/spring-boot/reference/io/rest-client.html)
 
 **TimeLimiter** trong project đặt thêm một giới hạn ở tầng Resilience4j. Nó giới hạn thời gian bên gọi chờ kết quả bất đồng bộ. Khi giới hạn này hết, `order-service` có thể trả lỗi trước khi HTTP client hết thời gian đọc. Việc trả lỗi sớm cũng không bảo đảm `user-service` đã dừng xử lý. Điều này quan trọng với thao tác ghi vì phía gọi có thể đã nhận timeout trong khi thay đổi ở phía server vẫn hoàn tất.
 
 ### Thực hành trên Swagger
 
-| Luồng                                            | Connect timeout Feign | Read timeout Feign | TimeLimiter                                    |
-| ------------------------------------------------ | --------------------- | ------------------ | ---------------------------------------------- |
-| `GET /api/orders/{orderId}`, client `xxx`        | 2000 ms               | 3000 ms            | —                                              |
-| Client `user-resilient` trong các API Resilience | 1000 ms               | 3000 ms            | 1500 ms ở kịch bản Timeout và kịch bản kết hợp |
+| Luồng                                            | Connect timeout HTTP | Read timeout HTTP | TimeLimiter                                    |
+| ------------------------------------------------ | -------------------- | ----------------- | ---------------------------------------------- |
+| `GET /api/orders/{orderId}`, client `xxx`        | 2000 ms              | 3000 ms           | —                                              |
+| Client `user-resilient` trong các API Resilience | 1000 ms              | 3000 ms           | 1500 ms ở kịch bản Timeout và kịch bản kết hợp |
+| Client `user-converge` (kịch bản Hội tụ)         | 500 ms               | 1000 ms           | — (để Feign tự cắt 1s)                         |
+| `RestClient` trong `RestClientConfig.java`       | 1000 ms              | 2500 ms           | —                                              |
 
-**Mục tiêu:** Cho User Service phản hồi sau 4 giây và xem tầng nào ngừng chờ trước.
+**Mục tiêu:** Cho User Service phản hồi sau 4 giây và xem từng tầng ngừng chờ theo mốc cấu hình riêng.
 
-| Bước                          | Tab   | API và ô cần điền                                                                | Kết quả cần nhìn                                  |
-| ----------------------------- | ----- | -------------------------------------------------------------------------------- | ------------------------------------------------- |
-| **1. Dọn cấu hình cũ**        | User  | `POST /api/chaos/reset`                                                          | Các giá trị giả lập về 0.                         |
-| **2. Tạo độ trễ 4 giây**      | User  | `POST /api/chaos`, nhập `delayMs = 4000`                                         | Phản hồi hiện `delayMs: 4000`.                    |
-| **3. Thử TimeLimiter (Tầng 2)**   | Order | `GET /api/orders/resilience/timeout/{userId}`, nhập `userId = 1`                 | HTTP **504**, `TIMEOUT`, khoảng **1,5 giây**.     |
-| **4. Thử Feign read timeout (Tầng 1 - Topic chính)** | Order | `GET /api/orders/resilience/feign-timeout/{userId}`, nhập `userId = 1` | HTTP **504**, `FEIGN_TIMEOUT`, khoảng **3 giây**. |
-| **5. Bỏ độ trễ**              | User  | `POST /api/chaos/reset`                                                          | Phản hồi hiện `delayMs: 0`.                       |
+| Bước                                               | Tab   | API và ô cần điền                                                       | Kết quả cần nhìn                                         |
+| -------------------------------------------------- | ----- | ----------------------------------------------------------------------- | -------------------------------------------------------- |
+| **1. Dọn cấu hình cũ**                             | User  | `POST /api/chaos/reset`                                                 | Các giá trị giả lập về 0.                                |
+| **2. Tạo độ trễ 4 giây**                           | User  | `POST /api/chaos`, nhập `delayMs = 4000`                                | Phản hồi hiện `delayMs: 4000`.                           |
+| **3. Thử TimeLimiter (Tầng 2)**                    | Order | `GET /api/orders/resilience/timeout/{userId}`, nhập `userId = 1`        | HTTP **504**, `TIMEOUT`, khoảng **1,5 giây**.            |
+| **4. Thử RestClient read timeout (Tầng 1)**        | Order | `GET /api/orders/resilience/restclient-timeout/{userId}`, `userId = 1`  | HTTP **504**, `RESTCLIENT_TIMEOUT`, khoảng **2,5 giây**. |
+| **5. Thử Feign read timeout (Tầng 1)**             | Order | `GET /api/orders/resilience/feign-timeout/{userId}`, nhập `userId = 1`  | HTTP **504**, `FEIGN_TIMEOUT`, khoảng **3 giây**.        |
+| **6. Bỏ độ trễ**                                   | User  | `POST /api/chaos/reset`                                                 | Phản hồi hiện `delayMs: 0`.                              |
 
-Hai lượt ở tab **Order** đều có `attempts: 1`. Bước 4 gọi trực tiếp endpoint `GET /api/orders/resilience/feign-timeout/1` (gọi OpenFeign thuần không qua bất kỳ Decorator Resilience4j nào) để kiểm chứng chính xác ngưỡng `readTimeout = 3000ms` của Feign client khi User Service trễ 4 giây. Bước 3 cho thấy TimeLimiter (1.5s) can thiệp sớm hơn để giải phóng thread pool của Order Service.
+Cả ba lượt ở tab **Order** đều có `attempts: 1`. Bước 4 và Bước 5 gọi thẳng tầng HTTP client (`RestClient` cắt ở 2,5 giây và `OpenFeign` cắt ở 3 giây) không qua Decorator Resilience4j; còn Bước 3 cho thấy `TimeLimiter` (1,5 giây) can thiệp sớm hơn ở tầng ứng dụng để giải phóng luồng của `order-service`.
 
 ## 2. Spring Retry / Resilience4j Retry
 
@@ -103,8 +106,9 @@ Retry phù hợp với thao tác đọc hoặc thao tác có tính idempotent, t
 Project đặt tối đa **3 lần gọi** và exponential backoff **500 ms → 1000 ms**. Chính sách thử lại cho các lỗi như timeout, lỗi mạng và HTTP 5xx, đồng thời loại HTTP 4xx từ Feign, lỗi mạch đang mở và lỗi Bulkhead đầy. Feign `Retryer` được tắt ở client `user-resilient` để số lần thử do Resilience4j kiểm soát. Nếu hai tầng cùng thử tối đa ba lần thì một request có thể phát sinh tới chín lần gọi xuống dịch vụ phụ thuộc.
 
 1. Ở tab **User**, chạy `POST /api/chaos/reset`. Sau đó chạy `POST /api/chaos` với `failFirstN = 2` để hai lời gọi đầu tiên lỗi.
-2. Ở tab **Order**, mở `GET /api/orders/resilience/retry/{userId}`, nhập `userId = 1` rồi bấm **Execute một lần**.
-3. Xem **HTTP 200**, `outcome: OK` và `attempts: 3`. Ở tab **User**, chạy `GET /api/chaos` để xác nhận `totalCalls: 3`. Lần thứ ba thành công sau hai khoảng chờ **500 ms** và **1000 ms**.
+2. Ở tab **Order**, chạy **Resilience4j Retry**: mở `GET /api/orders/resilience/retry/{userId}`, nhập `userId = 1` rồi bấm **Execute**.
+3. Xem **HTTP 200**, `outcome: OK` và `attempts: 3`, đồng thời mảng `attemptResults` ghi lại từng lần thử (2 lỗi 500 + lần 3 OK sau hai khoảng chờ **500 ms** và **1000 ms**). Ở tab **User**, chạy `GET /api/chaos` để xác nhận `totalCalls: 3`.
+4. *(Đối chiếu Spring Retry)* Reset Chaos và đặt lại `POST /api/chaos` với `failFirstN = 2`, rồi gọi `GET /api/orders/resilience/spring-retry/{userId}` (`userId = 1`). Kết quả cũng tự cứu ở `attempts = 3`, thực thi bằng `RetryTemplate` trong `RestClientConfig.java`. Lưu ý: `ResilienceKit.retryable()` loại trừ 4xx/CB open/Bulkhead full, còn `springRetryTemplate` đang dùng `.retryOn(Exception.class)` cho ví dụ cơ bản.
 
 **Thử hết lượt:** Reset Chaos rồi lặp lại với `failFirstN = 5`. Kết quả là HTTP **502**, `outcome: UPSTREAM_5XX` và `attempts: 3`. Ba lần đều gặp lỗi nên Order Service dừng thử.
 
@@ -164,17 +168,27 @@ Project dùng cửa sổ **5 lời gọi**, tối thiểu **5 mẫu**, ngưỡng
 2. Chờ khoảng **11 giây**. Ở tab **Order**, chạy `GET /api/orders/resilience/status` và tìm `circuitBreaker_demo4.state: HALF_OPEN`.
 3. Chạy lại API Circuit Breaker với `userId = 1` hai lần. Cả hai trả HTTP **200**. Sau lần đầu, trạng thái vẫn là `HALF_OPEN`. Sau lần thứ hai, gọi lại API trạng thái để thấy `CLOSED`.
 
-## Khi bốn cơ chế phối hợp
+## Khi bốn cơ chế phối hợp (`converge` và `combined`)
 
-Endpoint `GET /api/orders/resilience/combined/1` dùng thứ tự từ ngoài vào trong sau đây.
+Project có 2 luồng phối hợp phục vụ 2 mục tiêu minh họa:
+
+### 1. Luồng Hội tụ đúng 4 topic (`GET /api/orders/resilience/converge/{userId}` và `/burst/converge?n=6`)
+Đây là luồng dùng trong tab **Hội tụ 4 topic** trên Web UI (không dùng `TimeLimiter` hay `Fallback` để đúng 4 topic seminar cùng chạy):
 
 ```text
-Retry → Circuit Breaker → TimeLimiter → ThreadPool Bulkhead → OpenFeign → User Service
+Retry (ngoài cùng) → Circuit Breaker (cbConverge, mở 3s) → Bulkhead (3 suất) → OpenFeign 1s → User Service
 ```
 
-Mỗi lần thử phải qua Circuit Breaker trước. Nếu mạch cho phép, TimeLimiter giới hạn thời gian chờ của lần thử đó, gồm cả thời gian chờ tác vụ trong Bulkhead. Feign áp dụng timeout kết nối và đọc khi tác vụ thực sự bắt đầu gọi HTTP. Vì Retry nằm ngoài Circuit Breaker, các lần thử được breaker ghi nhận riêng. Nếu mạch đang mở hoặc Bulkhead đầy, Retry kết thúc ngay theo chính sách của project.
+### 2. Luồng Kết hợp mở rộng + Fallback (`GET /api/orders/resilience/combined/{userId}`)
+Dùng `ThreadPoolBulkhead` (3 worker + 2 queue), `TimeLimiter` (1.5s), `cbCombined` (mở 10s) và cơ chế trả dữ liệu dự phòng:
 
-Endpoint kết hợp mặc định có fallback. Khi thấy HTTP 200, kiểm tra `outcome` để phân biệt `OK` với `FALLBACK`. Thêm `?fallback=false` để quan sát mã lỗi từ chính sách bảo vệ.
+```text
+Retry → Circuit Breaker (cbCombined, mở 10s) → TimeLimiter (1.5s) → ThreadPool Bulkhead → OpenFeign → User Service
+```
+
+Mỗi lần thử phải qua Circuit Breaker trước. Ở `/combined`, TimeLimiter giới hạn thời gian chờ của lần thử đó (gồm cả thời gian chờ trong Bulkhead). Vì Retry luôn nằm ngoài Circuit Breaker, mọi lần thử đều được breaker ghi nhận riêng; nếu mạch đang `OPEN` hoặc Bulkhead đầy, Retry dừng ngay thay vì gây Retry Storm.
+
+Endpoint `/combined/1` mặc định bật fallback (`Khách (dự phòng)`). Khi thấy HTTP 200, kiểm tra `outcome` để phân biệt `OK` với `FALLBACK`. Thêm `?fallback=false` để quan sát mã lỗi thật từ chính sách bảo vệ.
 
 ## Dọn trạng thái sau demo
 

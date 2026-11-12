@@ -132,3 +132,20 @@ Mục này ghép **đúng 4 Topic chính** trên **cùng 1 đường ống xử 
 | **Bulkhead** | Chậm `2s` · Ngưỡng `3` chỗ | `Gửi 10 lượt cùng lúc` | Tràn cả 10/3 chỗ ➔ Chết chùm 0/10 (`10× 503`) | Giữ 3 suất (`200 OK`), chặn nhanh 7 lượt (`429`) · Bảo vệ Server | **200 / 429** |
 | **Circuit Breaker** | Lỗi 100% (`failPercent=100`) | `Gửi 6 lượt liên tiếp` | Gửi mù cả 6/6 lượt sang dịch vụ hỏng | Đủ 5 mẫu mở `OPEN`, lượt #6 chặn nhanh `503` (0 lượt User) | **503 Service Unavailable** |
 | **Hội tụ 4 Topic** | Tự động 5 chặng trên 4 trạm | `Chạy trọn vẹn 5 chặng` | Sập dây chuyền, cạn luồng, Retry Storm | 1 đường ống 4 trạm chuyển tiếp trạng thái CB xuyên suốt 5 chặng | **200 / 429 / 503** |
+
+---
+
+## 4. Test Nhanh Bonus Fallback, Unit Test & Lưu Ý Kỹ Thuật
+
+* **Kiểm thử Fallback qua Swagger / `demo.http`:**
+  * Gọi `POST http://localhost:8081/api/chaos?delayMs=4000`
+  * Gọi `GET http://localhost:8080/api/orders/resilience/combined/1` ➔ Trả **HTTP 200**, `outcome: "FALLBACK"`, `fallback: true`, user `"Khách (dự phòng)"`.
+  * Gọi `GET http://localhost:8080/api/orders/resilience/combined/1?fallback=false` ➔ Trả mã lỗi thật (`504`/`503`/`429`) thay vì dữ liệu dự phòng.
+* **Chạy bộ kiểm thử tự động Backend (`15/15` test PASS):**
+  ```bash
+  cd backend
+  .\mvnw.cmd test
+  ```
+* **Lưu ý khi demo Bulkhead `Không có bảo vệ` trên localhost:**
+  * Tomcat mặc định hỗ trợ `200` thread, nên khi bắn `n=10` request chậm `2s` trên máy local, `ResilienceDemoService.burst("no-protection", ...)` kiểm tra `peakConcurrent > safeCapacity` (`> 3` luồng) để mô phỏng rõ hiện tượng sập quá tải tập thể (`503 OVERLOAD_COLLAPSE`) tương ứng với ngưỡng chịu tải an toàn `3` chỗ của Bulkhead.
+

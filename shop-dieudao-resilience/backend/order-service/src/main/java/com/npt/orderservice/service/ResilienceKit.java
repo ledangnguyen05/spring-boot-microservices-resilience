@@ -71,18 +71,35 @@ public class ResilienceKit {
     private final CircuitBreaker cbConverge;
     private final Retry retryConverge;
 
+    /**
+     * Nạp tham số Resilience4j từ application.properties (số sau dấu ':' là giá trị mặc định nếu thiếu).
+     * Muốn đổi số liệu khi demo: sửa trong application.properties rồi restart order-service.
+     * (Feign timeout cũng chỉnh trong application.properties; còn RestClient & Spring Retry chỉnh ở RestClientConfig.java.)
+     */
     public ResilienceKit(
+            // [Topic 1 - TimeLimiter] Thời gian chờ tối đa (ms) ở Demo 1b & Demo 5 (cắt sớm hơn Feign 3s)
             @Value("${demo.timeout.duration-ms:1500}") long timeoutMs,
+            // [Topic 2 - Resilience4j Retry] Tổng số lần gọi tối đa (tính cả lần đầu: 3 = 1 chính + 2 retry)
             @Value("${demo.retry.max-attempts:3}") int maxAttempts,
+            // [Topic 2 - Resilience4j Retry] Thời gian chờ sau lần lỗi đầu tiên (ms)
             @Value("${demo.retry.initial-wait-ms:500}") long retryWaitMs,
+            // [Topic 2 - Resilience4j Retry] Hệ số nhân khoảng chờ giữa các lần thử (500ms -> 1000ms...)
             @Value("${demo.retry.multiplier:2.0}") double retryMultiplier,
+            // [Topic 3 - Semaphore Bulkhead] Số request đồng thời tối đa ở Demo 3 & Hội tụ (vượt -> 429)
             @Value("${demo.bulkhead.max-concurrent:3}") int bulkheadMax,
+            // [Topic 3 - ThreadPool Bulkhead] Số thread nền thường trực (chỉ dùng ở Demo 5 Combined)
             @Value("${demo.tpb.core-threads:3}") int tpbCore,
+            // [Topic 3 - ThreadPool Bulkhead] Số thread tối đa (chỉ dùng ở Demo 5 Combined)
             @Value("${demo.tpb.max-threads:3}") int tpbMax,
+            // [Topic 3 - ThreadPool Bulkhead] Hàng đợi tối đa khi thread bận (chỉ Demo 5: 3 thread + 2 queue = 5)
             @Value("${demo.tpb.queue-capacity:2}") int tpbQueue,
+            // [Topic 4 - Circuit Breaker] Kích thước cửa sổ trượt & số mẫu tối thiểu trước khi xét mở mạch
             @Value("${demo.cb.window-size:5}") int cbWindow,
+            // [Topic 4 - Circuit Breaker] Tỷ lệ lỗi (%) để bật OPEN (vd 50% trên 5 mẫu -> >= 3 lỗi)
             @Value("${demo.cb.failure-rate-threshold:50}") float cbThreshold,
+            // [Topic 4 - Circuit Breaker] Số giây giữ OPEN trước khi sang HALF_OPEN (Demo 4 & 5; Hội tụ đặt 3s bên dưới)
             @Value("${demo.cb.open-wait-seconds:10}") long cbOpenSeconds,
+            // [Topic 4 - Circuit Breaker] Số lượt thăm dò ở HALF_OPEN để quyết định đóng CLOSED hay mở lại
             @Value("${demo.cb.half-open-calls:2}") int cbHalfOpenCalls) {
 
         TimeLimiterConfig tlConfig = TimeLimiterConfig.custom()

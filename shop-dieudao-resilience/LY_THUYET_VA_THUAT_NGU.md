@@ -53,7 +53,7 @@ Hết giới hạn nào thì client **tự ngắt chờ** và ném ngoại lệ.
 | **SocketTimeoutException** | Ngoại lệ Java khi hết readTimeout. Feign bọc lại thành `FeignException` với `status() < 0`. | `toFailure()` đổi thành `FEIGN_TIMEOUT` (HTTP 504). |
 | **Connection refused** | Máy đích từ chối kết nối ngay (service tắt). Đây không phải timeout. | `UPSTREAM_DOWN` (HTTP 503). |
 | **OpenFeign** | Thư viện khai báo HTTP client bằng interface (`@FeignClient`). Timeout cấu hình theo tên client. | `spring.cloud.openfeign.client.config.<tên>.*` |
-| **RestClient** | HTTP client đồng bộ kiểu fluent của Spring. Timeout nằm ở `ClientHttpRequestFactory` (hoặc `spring.http.clients.connect-timeout` / `read-timeout` với builder do Spring Boot cấu hình). | Chỉ trình bày để đối chiếu, project dùng Feign. |
+| **RestClient** | HTTP client đồng bộ kiểu fluent của Spring 6.1+. Timeout đặt ở `ClientHttpRequestFactory` (hoặc `spring.http.client.connect-timeout` / `read-timeout`). | Đã cài đặt thật trong `RestClientConfig` (`connectTimeout=1000ms`, `readTimeout=2500ms`), test tại `/restclient-timeout/{userId}`. |
 | **TimeLimiter** (Resilience4j) | Giới hạn thời gian **bên gọi chờ kết quả bất đồng bộ**. Là tầng timeout thứ hai, ở mức ứng dụng. | `demo.timeout.duration-ms=1500` (chỉ ở Demo 1b và Demo 5). |
 
 ### Lưu ý khi trình bày
@@ -99,7 +99,7 @@ lần 1 ✗ ──chờ 500ms──► lần 2 ✗ ──chờ 1000ms──► l
 | Khi hết lượt | `@Recover` hoặc callback của `RetryTemplate` | Lỗi cuối được ném ra (hoặc dùng fallback) |
 | Lưu ý | Lời gọi phải đi qua **proxy**: phương thức tự gọi phương thức khác trong cùng bean sẽ **bỏ qua** retry. | Thứ tự lồng với Circuit Breaker / Bulkhead thể hiện rõ trong code. |
 
-Project dùng Resilience4j vì cần lồng nhiều cơ chế và thấy rõ thứ tự. Spring Retry chỉ được trình bày để đối chiếu, không có code chạy. Theo tôi biết, Spring Framework 7 (nền của Spring Boot 4) cũng đã có sẵn `@Retryable` và `RetryTemplate` trong lõi, bạn nên kiểm tra lại tài liệu Spring trước khi đưa điểm này lên slide.
+Project triển khai **cả hai** để đối chiếu trực tiếp: **Resilience4j Retry** (mặc định cho chuỗi kết hợp vì lồng rõ thứ tự với Circuit Breaker / Bulkhead qua `Decorators`) và **Spring Retry** (`@EnableRetry` trong `OrderServiceApplication.java`, `RetryTemplate` trong `RestClientConfig.java`, chạy ở endpoint `/api/orders/resilience/spring-retry/{userId}` và chạy song song trên Web UI). Lưu ý nhỏ khi đối chiếu code: `ResilienceKit.retryable()` loại trừ 4xx, `CallNotPermittedException` và `BulkheadFullException`, còn `springRetryTemplate` đang cấu hình `.retryOn(Exception.class)` để giữ ví dụ đơn giản. *(Lưu ý kiến thức nâng cao: trong hệ sinh thái Spring Framework 7 / Spring Boot 4 mới hơn, tính năng `@Retryable` / `RetryTemplate` cũng dần được tích hợp trực tiếp vào lõi Spring.)*
 
 ---
 
@@ -164,7 +164,7 @@ Giống **cầu dao điện**: theo dõi kết quả các lời gọi gần đâ
 | **Sliding window** (cửa sổ trượt) | Tập kết quả dùng để tính tỷ lệ lỗi. *Count-based* giữ N lời gọi gần nhất, *time-based* giữ các lời gọi trong N giây gần nhất. | Count-based, N = 5 |
 | **minimumNumberOfCalls** | Số mẫu tối thiểu trước khi đánh giá, để vài lỗi đầu không làm mở mạch. | 5 |
 | **failureRateThreshold** | Ngưỡng % lỗi để mở mạch. | 50% (2/5 = 40% giữ nguyên, 3/5 = 60% mở) |
-| **waitDurationInOpenState** | Thời gian ở OPEN trước khi sang HALF_OPEN. | 10 giây, tự chuyển (`automaticTransitionFromOpenToHalfOpenEnabled`) |
+| **waitDurationInOpenState** | Thời gian ở OPEN trước khi sang HALF_OPEN. | 10 giây ở Demo 4 & Combined (`cbOnly`), **3 giây** ở kịch bản Hội tụ (`cbConverge`), tự chuyển (`automaticTransitionFromOpenToHalfOpenEnabled`) |
 | **permittedNumberOfCallsInHalfOpenState** | Số lời gọi thăm dò ở HALF_OPEN. | 2 |
 | **CallNotPermittedException** | Ngoại lệ khi mạch OPEN từ chối lời gọi. | Ánh xạ thành `CIRCUIT_OPEN` |
 | **ignoreException** | Loại lỗi **không tính** vào tỷ lệ lỗi. | 4xx của Feign và `BulkheadFullException` |
@@ -195,36 +195,38 @@ Nếu đảo Retry vào trong Circuit Breaker thì cả chuỗi retry chỉ đư
 
 Endpoint: `GET /api/orders/resilience/converge/{userId}` (một lời gọi qua đủ 4 lớp) và `GET /api/orders/resilience/burst/converge?n=6` (nhiều lời gọi song song).
 
-Cấu hình dùng chung: Feign `user-converge` (connect 500 ms, **read 1000 ms**), Bulkhead 3 suất, Circuit Breaker (cửa sổ 5, ngưỡng 50%, mở 10 giây), Retry 3 lần (500 ms rồi 1000 ms). **Không** có TimeLimiter và fallback, nên chỉ đúng 4 topic tham gia.
+Cấu hình dùng chung: Feign `user-converge` (connect 500 ms, **read 1000 ms**), Bulkhead 3 suất, Circuit Breaker `cbConverge` (cửa sổ 5, ngưỡng 50%, mở **3 giây**, 2 lượt thăm dò), Retry 3 lần (500 ms rồi 1000 ms). **Không** có TimeLimiter và fallback, nên chỉ đúng 4 topic tham gia.
 
-Trên giao diện web, chọn kịch bản **Hội tụ 4 topic** rồi bấm **Chạy kịch bản 4 pha**. Giao diện tự đổi sự cố ở `user-service` giữa các pha.
+Trên giao diện web, chọn kịch bản **Hội tụ 4 topic** rồi bấm **Chạy trọn vẹn 5 chặng**. Giao diện tự đổi sự cố ở `user-service` giữa các chặng.
 
-| Pha | Sự cố giả lập | Lời gọi | Cơ chế ra tay | Kết quả mong đợi |
+| Chặng | Sự cố giả lập | Lời gọi | Cơ chế ra tay | Kết quả mong đợi |
 | --- | ------------- | ------- | ------------- | ---------------- |
-| **1** Lưu lượng tăng | `delayMs=600` | `burst/converge?n=6` | **Bulkhead** | 3 lượt `OK`, 3 lượt `BULKHEAD_FULL` (HTTP 429). Tổng 3 lần gọi User. Lượt bị từ chối không retry và không bị tính là lỗi. |
-| **2** Lỗi thoáng qua | `failFirstN=2` | `converge/1` | **Retry** | HTTP 200, `attempts = 3`, khoảng 1,5 giây (chờ 500 ms rồi 1000 ms). |
-| **3** User Service treo | `delayMs=3000` | `converge/1` | **Feign timeout** + **Circuit Breaker** + **Retry** | Feign cắt lần gọi đầu sau **1 giây** (không chờ 3 giây). Lỗi này đẩy tỷ lệ lỗi lên 60% nên mạch **OPEN**. Retry chờ 500 ms, thấy mạch mở thì **dừng**. Kết quả `CIRCUIT_OPEN`, `attempts = 1`, khoảng 1,5 giây. |
-| **4** Mạch đang mở | `delayMs=3000` | `converge/1` | **Circuit Breaker** (+ Retry không thử lại) | `CIRCUIT_OPEN` ngay (vài ms), `attempts = 0`, User Service không nhận thêm lời gọi nào. |
+| **1** Lưu lượng tăng | `delayMs=600` | `burst/converge?n=6` | **Bulkhead** | 3 lượt `OK`, 3 lượt `BULKHEAD_FULL` (HTTP 429). Tổng 3 lần gọi User, nạp 3 ô xanh `[✓✓✓]` cho CB. Lượt bị từ chối không retry và không bị tính là lỗi. |
+| **2** Lỗi thoáng qua | `failFirstN=2` | `converge/1` | **Retry** | HTTP 200, `attempts = 3`, khoảng 1,5 giây (chờ 500 ms rồi 1000 ms). 2 lỗi chỉ đẩy CB lên 40% (`< 50%`) nên mạch giữ `CLOSED`. |
+| **3** User Service treo | `delayMs=3000` | `converge/1` | **Feign timeout** + **Circuit Breaker** + **Retry** | Feign cắt lần gọi đầu sau **1 giây** (không chờ 3 giây). Lỗi này đẩy tỷ lệ lỗi lên **60%** (`3/5`) nên mạch **OPEN**. Retry chờ 500 ms, thấy mạch mở (`CallNotPermittedException`) thì **dừng**. Kết quả `CIRCUIT_OPEN` (HTTP 503), `attempts = 1`, khoảng 1,5 giây. |
+| **4** Mạch đang mở | `delayMs=3000` | `converge/1` | **Circuit Breaker** (+ Retry dừng hẳn) | `CIRCUIT_OPEN` ngay (~10 ms, HTTP 503), `attempts = 0`, Trạm 3–4 và User Service không nhận thêm lời gọi nào. |
+| **5** Tự chữa lành | `reset` (0 lỗi, 0 ms) | Đợi > 3s + 2 lần `converge/1` | **Circuit Breaker** (`HALF_OPEN` → `CLOSED`) | Hết 3 giây `OPEN`, `cbConverge` tự chuyển `HALF_OPEN`. 2 lượt thăm dò đi xuyên qua cả 4 trạm đều `200 OK` ➔ mạch đóng lại **`CLOSED`** bình thường. |
 
-### Vì sao pha 3 làm mạch mở: số học của cửa sổ trượt
+### Vì sao chặng 3 làm mạch mở: số học của cửa sổ trượt
 
 Cửa sổ giữ 5 kết quả **gần nhất** (OK = ✓, lỗi = ✗). Lượt Bulkhead bị từ chối **không** được ghi nhận.
 
 | Sau bước | Cửa sổ 5 mẫu gần nhất | Tỷ lệ lỗi | Mạch |
 | -------- | --------------------- | --------- | ---- |
-| Pha 1 (3 lượt OK) | ✓ ✓ ✓ (mới 3 mẫu) | chưa đánh giá | CLOSED |
-| Pha 2, lần gọi 1–2 (lỗi 500) | ✓ ✓ ✓ ✗ ✗ | 40% | CLOSED |
-| Pha 2, lần gọi 3 (OK) | ✓ ✓ ✗ ✗ ✓ | 40% | CLOSED |
-| Pha 3, lần gọi 1 (Feign timeout) | ✓ ✗ ✗ ✓ ✗ | **60%** | **OPEN** |
+| Chặng 1 (3 lượt OK) | ✓ ✓ ✓ (mới 3 mẫu) | chưa đánh giá | CLOSED |
+| Chặng 2, lần gọi 1–2 (lỗi 500) | ✓ ✓ ✓ ✗ ✗ | 40% | CLOSED |
+| Chặng 2, lần gọi 3 (OK) | ✓ ✓ ✗ ✗ ✓ | 40% | CLOSED |
+| Chặng 3, lần gọi 1 (Feign timeout) | ✓ ✗ ✗ ✓ ✗ | **60%** | **OPEN** (khóa 3s) |
+| Chặng 5, 2 lượt thăm dò OK | — (mạch reset cửa sổ khi đóng) | 0% | **CLOSED** |
 
 ### Chạy bằng tay (Swagger hoặc `demo.http`)
 
 1. `POST :8081/api/chaos/reset` và `POST :8082/api/orders/resilience/reset`.
-2. Pha 1: `POST :8081/api/chaos?delayMs=600`, rồi `GET .../burst/converge?n=6`.
-3. Pha 2: `POST :8081/api/chaos/reset`, `POST :8081/api/chaos?failFirstN=2`, rồi `GET .../converge/1`.
-4. Pha 3: `POST :8081/api/chaos/reset`, `POST :8081/api/chaos?delayMs=3000`, rồi `GET .../converge/1`.
-5. Pha 4: gọi lại `GET .../converge/1`.
-6. Phục hồi (tùy chọn): `POST :8081/api/chaos/reset`, đợi hơn 10 giây (mạch sang `HALF_OPEN`), gọi `converge/1` hai lần, rồi xem `GET .../status` để thấy `circuitBreaker_converge: CLOSED`.
+2. Chặng 1: `POST :8081/api/chaos?delayMs=600`, rồi `GET .../burst/converge?n=6`.
+3. Chặng 2: `POST :8081/api/chaos/reset`, `POST :8081/api/chaos?failFirstN=2`, rồi `GET .../converge/1`.
+4. Chặng 3: `POST :8081/api/chaos/reset`, `POST :8081/api/chaos?delayMs=3000`, rồi `GET .../converge/1`.
+5. Chặng 4: gọi lại `GET .../converge/1` ngay để thấy fail-fast 503.
+6. Chặng 5 (Phục hồi): `POST :8081/api/chaos/reset`, đợi hơn **3 giây** (mạch `cbConverge` sang `HALF_OPEN`), gọi `converge/1` hai lần, rồi xem `GET .../status` để thấy `circuitBreaker_converge.state: CLOSED`.
 
 > **Lưu ý khi demo:** kết quả phụ thuộc vào đúng thứ tự các pha và việc mạch được reset từ đầu. Nếu số liệu lệch (ví dụ lần chạy đầu JVM còn "lạnh" nên một lượt ở pha 1 bị chậm quá 1 giây), bấm **Đặt lại** rồi chạy lại. Nên chạy thử một lần trước giờ trình bày.
 
